@@ -3,7 +3,7 @@
 export WANDB_MODE=dryrun
 export WANDB_API_KEY="1396a7d2a29a8e8241dff6e0e6371f2ad61e11e2"
 
-OUTPUT_DIR="/mnt/data/yuxi/llava/outputs/llava-v1.5-7b-dpo-test"
+OUTPUT_DIR="/mnt/data/yuxi/llava/outputs/llava-v1.5-7b-dpo-sherlock37k"
 mkdir -p $OUTPUT_DIR
 
 exec 1> >(tee "${OUTPUT_DIR}/stdout.log" >&1) 2> >(tee "${OUTPUT_DIR}/stderr.log" >&2)
@@ -29,8 +29,8 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --deepspeed ./scripts/zero3_offload.json \
     --model_name_or_path liuhaotian/llava-v1.5-7b \
     --version v1 \
-    --data_path /mnt/data/yuxi/llava/data/llava_contrastive_58k_da.json \
-    --image_folder /mnt/data/yuxi/visual-genome \
+    --data_path /mnt/data/yuxi/dpo_llava/data/sherlock_37k.json \
+    --image_folder /mnt/data/yuxi/sherlock/img2img/train \
     --vision_tower openai/clip-vit-large-patch14-336 \
     --mm_projector_type mlp2x_gelu \
     --mm_vision_select_layer -2 \
