@@ -30,7 +30,7 @@ from typing_extensions import Self  # Python 3.11+
 import wandb
 from tqdm import tqdm  # pylint: disable=wrong-import-order
 
-from llava.utils import is_main_process, rank_zero_only
+from llava_dpo.utils import is_main_process, rank_zero_only
 
 
 if TYPE_CHECKING:

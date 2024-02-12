@@ -26,14 +26,14 @@ import torch
 
 import transformers
 
-from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
+from llava_dpo.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
 from torch.utils.data import Dataset
-from llava.train.llava_trainer import DPOLLaVATrainer
+from llava_dpo.train.llava_trainer import DPOLLaVATrainer
 
-from llava import conversation as conversation_lib
-from llava.model import *
-from llava.mm_utils import tokenizer_image_token
-from llava.ds_configs.deepspeed_config import get_deepspeed_eval_config
+from llava_dpo import conversation as conversation_lib
+from llava_dpo.model import *
+from llava_dpo.mm_utils import tokenizer_image_token
+from llava_dpo.ds_configs.deepspeed_config import get_deepspeed_eval_config
 
 from PIL import Image
 

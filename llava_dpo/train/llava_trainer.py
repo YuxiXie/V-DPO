@@ -33,11 +33,11 @@ from typing import (
 import deepspeed
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
-from llava.logger import Logger
-from llava.constants import ADAM_BETAS, IMAGE_TOKEN_INDEX, IGNORE_INDEX
-from llava.model.utils import gather_log_probabilities
-from llava.model import LlavaLlamaForCausalLM
-from llava.utils import is_main_process, to_device, get_all_reduce_mean
+from llava_dpo.logger import Logger
+from llava_dpo.constants import ADAM_BETAS, IMAGE_TOKEN_INDEX, IGNORE_INDEX
+from llava_dpo.model.utils import gather_log_probabilities
+from llava_dpo.model import LlavaLlamaForCausalLM
+from llava_dpo.utils import is_main_process, to_device, get_all_reduce_mean
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
