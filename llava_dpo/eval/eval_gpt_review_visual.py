@@ -12,7 +12,7 @@ def get_eval(content: str, max_tokens: int):
     while True:
         try:
             response = openai.ChatCompletion.create(
-                model='gpt-4-0314',
+                model='gpt-4',
                 messages=[{
                     'role': 'system',
                     'content': 'You are a helpful and precise assistant for checking the quality of the answer.'
@@ -24,8 +24,6 @@ def get_eval(content: str, max_tokens: int):
                 max_tokens=max_tokens,
             )
             break
-        except openai.error.RateLimitError:
-            pass
         except Exception as e:
             print(e)
         time.sleep(NUM_SECONDS_TO_SLEEP)

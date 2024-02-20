@@ -310,7 +310,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         self.args = args
         self.scale_coeff = scale_coeff
         self.args.need_eval = eval_dataset is not None
-        self.logger = Logger()
+        self.logger = Logger(log_dir=self.args.output_dir)
         self.train_dataloader = DataLoader(
             train_dataset,
             collate_fn=data_collator,
@@ -525,11 +525,14 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         better_sample_rewards = []
         worse_sample_rewards = []
         for i in range(batch_size):
-            assert not torch.all(
-                torch.eq(better_input_ids[i], worse_input_ids[i])
-            ).item() or not torch.all(
-                torch.eq(better_images[i], worse_images[i])
-            ).item(), 'The better and worse samples are the same!'
+            try:
+                assert not torch.all(
+                    torch.eq(better_input_ids[i], worse_input_ids[i])
+                ).item() or not torch.all(
+                    torch.eq(better_images[i], worse_images[i])
+                ).item(), 'The better and worse samples are the same!'
+            except:
+                import ipdb; ipdb.set_trace()
             
             better_end_index = better_attention_mask[i].nonzero()[-1]
             worse_end_index = worse_attention_mask[i].nonzero()[-1]
@@ -537,8 +540,11 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
                 diverge_index = (better_input_ids[i] != worse_input_ids[i]).nonzero()[0]
             except:
                 diverge_index = better_input_ids[i].eq(IMAGE_TOKEN_INDEX).nonzero()[0] + 1
-            assert 0 <= diverge_index <= better_end_index, 'diverge index is out of range!'
-            assert 0 <= diverge_index <= worse_end_index, 'diverge index is out of range!'
+            try:
+                assert 0 <= diverge_index <= better_end_index, 'diverge index is out of range!'
+                assert 0 <= diverge_index <= worse_end_index, 'diverge index is out of range!'
+            except:
+                import ipdb; ipdb.set_trace()
             
             better_seq_slice = slice(diverge_index, better_end_index + 1)
             worse_seq_slice = slice(diverge_index, worse_end_index + 1)
