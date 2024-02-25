@@ -440,7 +440,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             num_training_steps (int): The number of training steps to do.
         """
         num_warmup_steps = int(self.args.warmup_ratio * self.args.total_training_steps)
-        self.ds_train_config['scheduler']['params']['warmup_num_steps'] = num_warmup_steps
+        # self.ds_train_config['scheduler']['params']['warmup_num_steps'] = num_warmup_steps
         self.lr_scheduler = get_scheduler(
             self.args.lr_scheduler_type,
             optimizer=self.optimizer if optimizer is None else optimizer,

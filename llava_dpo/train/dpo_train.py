@@ -14,6 +14,9 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
+from llava_dpo.train.llama_flash_attn_monkey_patch import replace_llama_attn_with_flash_attn
+replace_llama_attn_with_flash_attn()
+
 import os
 import copy
 from dataclasses import dataclass, field

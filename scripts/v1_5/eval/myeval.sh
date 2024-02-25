@@ -1,6 +1,6 @@
 #!/bin/bash
 
-IDX=1
+IDX=2
 
 # CUDA_VISIBLE_DEVICES=$IDX python -m llava.eval.model_vqa \
 #     --model-path \
@@ -12,15 +12,25 @@ IDX=1
 #     --answers-file \
 #     /mnt/data/yuxi/dpo_llava/outputs/predictions/answer-file-sherlock.jsonl
 
+# CUDA_VISIBLE_DEVICES=$IDX python -m llava.eval.model_vqa \
+#     --model-path \
+#     liuhaotian/llava-v1.5-7b \
+#     --question-file \
+#     /mnt/data/yuxi/shikra/data/coco_pope_popular.jsonl \
+#     --image-folder \
+#     /mnt/data/yuxi/coco/coco2014/val2014 \
+#     --answers-file \
+#     /mnt/data/yuxi/dpo_llava/outputs/predictions/pope-popular-answer-file-baseline.jsonl
+
 CUDA_VISIBLE_DEVICES=$IDX python -m llava.eval.model_vqa \
     --model-path \
     liuhaotian/llava-v1.5-7b \
     --question-file \
-    /mnt/data/yuxi/shikra/data/coco_pope_popular.jsonl \
+    /home/yuxi/Projects/LLaVA-DPO/playground/data/faithscore/test_qa_1000x3.jsonl \
     --image-folder \
     /mnt/data/yuxi/coco/coco2014/val2014 \
     --answers-file \
-    /mnt/data/yuxi/dpo_llava/outputs/predictions/pope-popular-answer-file-baseline.jsonl
+    /mnt/data/yuxi/dpo_llava/outputs/predictions/faithscore-qa-answer-file-baseline.jsonl
 
 # liuhaotian/llava-v1.5-7b
 # /mnt/data/yuxi/llava/outputs/llava-v1.5-7b-dpo-myfilter/checkpoint-3072
