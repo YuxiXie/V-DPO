@@ -557,8 +557,12 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             ith_ref_worse_log_probs = (ref_worse_log_probs[i, worse_seq_slice] * worse_label_mask[i, worse_seq_slice]).sum(dim=-1)
             better_log_ratio = ith_better_log_probs - ith_ref_better_log_probs
             worse_log_ratio = ith_worse_log_probs - ith_ref_worse_log_probs
+            logits = better_log_ratio - worse_log_ratio
 
-            losses.append(-F.logsigmoid(self.scale_coeff * (better_log_ratio - worse_log_ratio)))
+            if self.args.ipo:
+                losses.append((logits - 1 / (2 * self.scale_coeff)) ** 2)
+            else:
+                losses.append(-F.logsigmoid(self.scale_coeff * logits))
             better_sample_rewards.append(self.scale_coeff * better_log_ratio.detach())
             worse_sample_rewards.append(self.scale_coeff * worse_log_ratio.detach())
         
