@@ -22,7 +22,7 @@ from transformers.trainer import (
     ShardedDDPOption,
     logger,
 )
-from transformers.deepspeed import HfDeepSpeedConfig
+from transformers.deepspeed import HfDeepSpeedConfig, deepspeed_load_checkpoint
 
 from tqdm import tqdm
 from typing import (
@@ -347,6 +347,8 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             lr_scheduler=self.lr_scheduler,
             dist_init_required=True,
         )
+        if self.args.resume_from_ckpt:
+            deepspeed_load_checkpoint(self.model, self.args.resume_from_ckpt)
         if self.args.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
         
@@ -600,9 +602,26 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             disable=not is_main_process(),
         )
         self.global_step = 0
+        if self.args.resume_from_ckpt is not None:
+            steps_trained_in_current_epoch = self.model.global_steps * self.args.gradient_accumulation_steps
+            if steps_trained_in_current_epoch > 0:
+                progress_bar.update(steps_trained_in_current_epoch)
+            self.global_step = steps_trained_in_current_epoch
+            epochs_trained = steps_trained_in_current_epoch // len(self.train_dataloader)
+            steps_trained_in_current_epoch %= len(self.train_dataloader)
+            if not steps_trained_in_current_epoch:
+                _step = int(self.args.resume_from_ckpt.split('/')[-1].replace('steps', ''))
+                steps_trained_in_current_epoch = _step
+                progress_bar.update(steps_trained_in_current_epoch)
+        
         for epoch in range(self.args.num_train_epochs):
+            if epoch < epochs_trained: continue
             self.model.train()
             for batch in self.train_dataloader:
+                if steps_trained_in_current_epoch > 0:
+                    steps_trained_in_current_epoch -= 1
+                    continue
+                
                 info = self.train_step(**to_device(batch, self.args.device))
                 torch.cuda.empty_cache()             
                 
@@ -629,6 +648,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
                     self.logger.print(f'\n***** Evaluating at step {self.global_step} *****')
                     self.logger.log(self.eval(), step=self.global_step)
 
+            self.save(global_steps=self.global_step)
             if self.args.need_eval and self.args.eval_strategy == 'epoch':
                 self.logger.print(
                     f'\n***** Evaluating at epoch {epoch + 1}/{self.args.epochs} *****',

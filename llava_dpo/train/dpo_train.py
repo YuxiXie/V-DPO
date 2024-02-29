@@ -100,6 +100,7 @@ class TrainingArguments(transformers.TrainingArguments):
         default=16,
         metadata={"help": "How many bits to use."}
     )
+    resume_from_ckpt: Optional[str] = None
     lora_enable: bool = False
     lora_r: int = 64
     lora_alpha: int = 16
