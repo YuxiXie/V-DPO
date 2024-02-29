@@ -602,6 +602,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             disable=not is_main_process(),
         )
         self.global_step = 0
+        epochs_trained, steps_trained_in_current_epoch = 0, 0
         if self.args.resume_from_ckpt is not None:
             steps_trained_in_current_epoch = self.model.global_steps * self.args.gradient_accumulation_steps
             if steps_trained_in_current_epoch > 0:
