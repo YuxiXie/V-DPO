@@ -615,13 +615,15 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         epochs_trained, steps_trained_in_current_epoch = 0, 0
         if self.args.resume_from_ckpt is not None:
             steps_trained_in_current_epoch = self.model.global_steps * self.args.gradient_accumulation_steps
-            if steps_trained_in_current_epoch > 0:
-                progress_bar.update(steps_trained_in_current_epoch)
             self.global_step = steps_trained_in_current_epoch
             epochs_trained = steps_trained_in_current_epoch // len(self.train_dataloader)
             steps_trained_in_current_epoch %= len(self.train_dataloader)
+            print('\n')
+            print(steps_trained_in_current_epoch, epochs_trained, len(self.train_dataloader))
+            print(self.model.global_steps, self.args.gradient_accumulation_steps)
+            print('\n')
             if not steps_trained_in_current_epoch:
-                _step = int(self.args.resume_from_ckpt.split('/')[-1].replace('steps', ''))
+                _step = int(self.args.resume_from_ckpt.split('/')[-1].replace('steps', '').split('-')[-1])
                 steps_trained_in_current_epoch = _step
                 progress_bar.update(steps_trained_in_current_epoch)
         
@@ -629,6 +631,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             if epoch < epochs_trained: continue
             self.model.train()
             for batch in self.train_dataloader:
+                progress_bar.update(1)
                 if steps_trained_in_current_epoch > 0:
                     steps_trained_in_current_epoch -= 1
                     continue
