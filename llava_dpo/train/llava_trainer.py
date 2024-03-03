@@ -598,7 +598,6 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             'train/rewards_accuracy': rewards_accuracy.item(),
             'train/rewards_margin': rewards_margin.item(),
             'train/lr': self.model.optimizer.param_groups[0]['lr'],
-            'lr': self.model.lr_scheduler.get_lr()[0]
         }
     
     def train(self) -> None:
