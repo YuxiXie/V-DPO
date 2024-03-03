@@ -309,7 +309,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         self.args = args
         self.scale_coeff = self.args.scale_coeff
         self.args.need_eval = eval_dataset is not None
-        self.logger = Logger(log_dir=self.args.output_dir)
+        self.logger = Logger(log_project=self.args.log_project, log_dir=self.args.output_dir)
         self.train_dataloader = DataLoader(
             train_dataset,
             collate_fn=data_collator,

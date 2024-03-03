@@ -111,6 +111,7 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_bias: str = "none"
     mm_projector_lr: Optional[float] = None
     group_by_modality_length: bool = field(default=False)
+    log_project: Optional[str] = None
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
