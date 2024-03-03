@@ -34,7 +34,7 @@ import deepspeed
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
 from llava_dpo.logger import Logger
-from llava_dpo.constants import ADAM_BETAS, IMAGE_TOKEN_INDEX, IGNORE_INDEX
+from llava_dpo.constants import ADAM_BETAS, IMAGE_TOKEN_INDEX, IGNORE_INDEX, ASSISTANT_TOKEN_IDS
 from llava_dpo.model.utils import gather_log_probabilities
 from llava_dpo.model import LlavaLlamaForCausalLM
 from llava_dpo.utils import is_main_process, to_device, get_all_reduce_mean
@@ -541,7 +541,13 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             try:
                 diverge_index = (better_input_ids[i] != worse_input_ids[i]).nonzero()[0]
             except:
-                diverge_index = better_input_ids[i].eq(IMAGE_TOKEN_INDEX).nonzero()[0] + 1
+                # diverge_index = better_input_ids[i].eq(IMAGE_TOKEN_INDEX).nonzero()[0] + 1
+                assistant_indexes = better_input_ids[i].eq(ASSISTANT_TOKEN_IDS[0]).nonzero()
+                diverge_index = assistant_indexes[-1] + 1
+                for idx in assistant_indexes:
+                    if better_input_ids[i][idx - len(ASSISTANT_TOKEN_IDS) + 1: idx + 1].tolist() == ASSISTANT_TOKEN_IDS:
+                        diverge_index = idx + 1
+                        break
             try:
                 assert 0 <= diverge_index <= better_end_index, 'diverge index is out of range!'
                 assert 0 <= diverge_index <= worse_end_index, 'diverge index is out of range!'
