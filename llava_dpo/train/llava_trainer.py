@@ -642,7 +642,6 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
                     f'Training {epoch + 1}/{self.args.num_train_epochs} epoch '
                     f'(loss {info["train/loss"]:.4f})',
                 )
-                progress_bar.update(1)
 
                 info['train/epoch'] = self.global_step / len(self.train_dataloader)
                 self.logger.log(info, step=self.global_step)
