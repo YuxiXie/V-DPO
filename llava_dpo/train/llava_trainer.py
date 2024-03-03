@@ -304,11 +304,10 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         train_dataset: Optional[Dataset] = None,
         eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
-        scale_coeff: float = .01,
     ) -> None:
         args.num_train_epochs = int(args.num_train_epochs)
         self.args = args
-        self.scale_coeff = scale_coeff
+        self.scale_coeff = self.args.scale_coeff
         self.args.need_eval = eval_dataset is not None
         self.logger = Logger(log_dir=self.args.output_dir)
         self.train_dataloader = DataLoader(

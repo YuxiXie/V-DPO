@@ -100,6 +100,7 @@ class TrainingArguments(transformers.TrainingArguments):
         default=16,
         metadata={"help": "How many bits to use."}
     )
+    scale_coeff: float = .01
     resume_from_ckpt: Optional[str] = None
     ipo: bool = False
     lora_enable: bool = False
