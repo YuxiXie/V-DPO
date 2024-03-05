@@ -1,5 +1,6 @@
 import os
 import sys
+import itertools
 import subprocess
 
 import torch
@@ -119,6 +120,17 @@ def get_length_grouped_indices(lengths, batch_size, world_size, generator=None, 
     megabatches = [split_to_even_chunks(megabatch, lengths, world_size) for megabatch in megabatches]
 
     return [i for megabatch in megabatches for batch in megabatch for i in batch]
+
+
+class DummyDataset(Dataset[Dict[str, torch.Tensor]]):
+    def __init__(self, length: int) -> None:
+        self.length = length
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        return {}
 
 
 class LengthGroupedSampler(Sampler):
@@ -301,8 +313,11 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         ds_train_config: dict[str, Any],
         ds_eval_config: dict[str, Any],
         data_collator: Optional[DataCollator] = None,
+        ptx_data_collator: Optional[DataCollator] = None,
         train_dataset: Optional[Dataset] = None,
         eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
+        ptx_train_dataset: Optional[Dataset] = None,
+        ptx_eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
     ) -> None:
         args.num_train_epochs = int(args.num_train_epochs)
@@ -317,6 +332,26 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             batch_size=args.per_device_train_batch_size,
         )
         
+        self.use_ptx = ptx_train_dataset is not None
+        if self.use_ptx:
+            self.ptx_train_dataloader = DataLoader(
+                ptx_train_dataset,
+                collate_fn=ptx_data_collator,
+                sampler=DistributedSampler(train_dataset, shuffle=True),
+                batch_size=args.per_device_ptx_train_batch_size,
+            )
+        else:
+            self.ptx_train_dataloader = DataLoader(DummyDataset(len(self.train_dataloader)))
+        
+        self.args.num_update_steps_per_epoch = (
+            len(self.train_dataloader) + self.args.gradient_accumulation_steps - 1
+        ) // self.args.gradient_accumulation_steps
+        self.args.total_training_steps = self.args.num_train_epochs * self.args.num_update_steps_per_epoch
+        if self.use_ptx:
+            self.args.gradient_accumulation_steps *= 2
+            ds_train_config['train_batch_size'] *= 2
+            ds_train_config['gradient_accumulation_steps'] *= 2
+        
         self.ds_train_config = ds_train_config
         self.ds_eval_config = ds_eval_config
         if (
@@ -330,13 +365,8 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         ):
             self.dsechf_eval = HfDeepSpeedConfig(self.ds_eval_config)
         
-        self.args.num_update_steps_per_epoch = (
-            len(self.train_dataloader) + self.args.gradient_accumulation_steps - 1
-        ) // self.args.gradient_accumulation_steps
-        self.args.total_training_steps = self.args.num_train_epochs * self.args.num_update_steps_per_epoch
-        
         self.model = model
-        self.create_optimizer_and_scheduler(num_training_steps=self.args.total_training_steps)
+        self.create_optimizer_and_scheduler(num_training_steps=self.args.total_training_steps)            
         
         self.model, *_ = deepspeed.initialize(
             model=self.model,
@@ -599,6 +629,28 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             'train/lr': self.model.optimizer.param_groups[0]['lr'],
         }
     
+    def ptx_step(
+        self,
+        input_ids: torch.LongTensor,
+        labels: torch.LongTensor,
+        attention_mask: torch.BoolTensor,
+        images: torch.Tensor,
+    ) -> dict[str, Any]:
+        outputs = self.model.module(input_ids, attention_mask=attention_mask, labels=labels, images=images)
+        ptx_loss = outputs.loss * self.args.ptx_coef
+        
+        if ptx_loss.isnan():
+            import ipdb; ipdb.set_trace()
+        
+        self.model.backward(ptx_loss)
+        self.model.step()
+        
+        ptx_loss = get_all_reduce_mean(ptx_loss)
+        
+        return {
+            'train/ptx_loss': ptx_loss.item(),
+        }
+    
     def train(self) -> None:
         """Train the model."""
         self.logger.print('***** Running training *****')
@@ -612,7 +664,10 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         self.global_step = 0
         epochs_trained, steps_trained_in_current_epoch = 0, 0
         if self.args.resume_from_ckpt is not None:
-            steps_trained_in_current_epoch = self.model.global_steps * self.args.gradient_accumulation_steps
+            if self.use_ptx:
+                steps_trained_in_current_epoch = self.model.global_steps * self.args.gradient_accumulation_steps // 2
+            else:
+                steps_trained_in_current_epoch = self.model.global_steps * self.args.gradient_accumulation_steps
             self.global_step = steps_trained_in_current_epoch
             epochs_trained = steps_trained_in_current_epoch // len(self.train_dataloader)
             steps_trained_in_current_epoch %= len(self.train_dataloader)
@@ -625,17 +680,27 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
                 steps_trained_in_current_epoch = _step
                 progress_bar.update(steps_trained_in_current_epoch)
         
+        num_prompt_only_batches = len(self.train_dataloader)
+        num_ptx_batches = len(self.ptx_train_dataloader)
+        num_ptx_replicas = (num_prompt_only_batches + num_ptx_batches - 1) // num_ptx_batches
+        
         for epoch in range(self.args.num_train_epochs):
             if epoch < epochs_trained: continue
             self.model.train()
-            for batch in self.train_dataloader:
+            for batch, ptx_batch in zip(
+                self.train_dataloader,
+                itertools.chain.from_iterable([self.ptx_train_dataloader] * num_ptx_replicas),
+            ):
                 progress_bar.update(1)
                 if steps_trained_in_current_epoch > 0:
                     steps_trained_in_current_epoch -= 1
                     continue
                 
                 info = self.train_step(**to_device(batch, self.args.device))
-                torch.cuda.empty_cache()             
+                torch.cuda.empty_cache()
+                if self.use_ptx:
+                    ptx_info = self.ptx_step(**to_device(ptx_batch, self.args.device))
+                    torch.cuda.empty_cache()
                 
                 self.global_step += 1
                 progress_bar.set_description(
@@ -645,6 +710,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
 
                 info['train/epoch'] = self.global_step / len(self.train_dataloader)
                 self.logger.log(info, step=self.global_step)
+                self.logger.log(ptx_info, step=self.global_step)
                 
                 if self.global_step % self.args.save_steps == 0:
                     self.logger.print(f'Saving checkpoint at step {self.global_step} ...')
