@@ -581,7 +581,8 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
                 assert 0 <= diverge_index <= better_end_index, 'diverge index is out of range!'
                 assert 0 <= diverge_index <= worse_end_index, 'diverge index is out of range!'
             except:
-                import ipdb; ipdb.set_trace()
+                better_end_index = max(better_end_index, worse_end_index)
+                worse_end_index = max(better_end_index, worse_end_index)
             
             better_seq_slice = slice(diverge_index, better_end_index + 1)
             worse_seq_slice = slice(diverge_index, worse_end_index + 1)

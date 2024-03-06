@@ -24,7 +24,6 @@ import json
 import logging
 import pathlib
 from typing import Dict, Optional, Sequence, List, Union
-from datasets import load_dataset
 
 import torch
 
