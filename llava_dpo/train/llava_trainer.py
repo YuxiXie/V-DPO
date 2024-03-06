@@ -710,7 +710,8 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
 
                 info['train/epoch'] = self.global_step / len(self.train_dataloader)
                 self.logger.log(info, step=self.global_step)
-                self.logger.log(ptx_info, step=self.global_step)
+                if self.use_ptx:
+                    self.logger.log(ptx_info, step=self.global_step)
                 
                 if self.global_step % self.args.save_steps == 0:
                     self.logger.print(f'Saving checkpoint at step {self.global_step} ...')
