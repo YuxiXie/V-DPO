@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'
+import sys
 
 import json
 import codecs
@@ -37,36 +37,40 @@ def extract_outputs(fname, rawfile):
 def cal_faithscore(fname, scorer):
     rawfile = 'coco2014_sample_1k.jsonl' if 'caption-' in fname else 'test_qa_1000x3.jsonl'
     images, answers, info = extract_outputs(fname, f'/home/yuxi/Projects/LLaVA-DPO/playground/data/faithscore/{rawfile}')
-    score, sentence_score, scores_list = scorer.faithscore(answers, images)
+    logfile = fname.replace('.jsonl', '.pkl')
+    score, sentence_score, scores_list = scorer.faithscore(answers, images, logfile=logfile)
     instance_score, sentence_level_score = scores_list
-    if 'caption-' in fname:
-        scores = {
-            'instance_score': {'avg': score, 'all': instance_score},
-            'sentence_level_score': {'avg': sentence_score, 'all': sentence_level_score},
-        }
-    else:
-        scores = {
-            'instance_score': {
-                'avg': score, 
-                'complex': sum(instance_score[:1000]) / 1000, 
-                'detail': sum(instance_score[1000:2000]) / 1000, 
-                'conv': sum(instance_score[2000:]) / 1000, 
-                'all': instance_score,
-            },
-            'sentence_level_score': {
-                'avg': sentence_score, 
-                'complex': sum(sentence_level_score[:1000]) / 1000, 
-                'detail': sum(sentence_level_score[1000:2000]) / 1000, 
-                'conv': sum(sentence_level_score[2000:]) / 1000, 
-                'all': sentence_level_score,
-            },
-        }
-    for k, v in scores.items():
-        print(f'===== {k} =====')
-        for kk, vv in v.items():
-            if kk != 'all': continue
-            print(kk, vv)
-    json_dump(scores, fname.replace('.jsonl', '_scores.json'))
+    try:
+        if 'caption-' in fname:
+            scores = {
+                'instance_score': {'avg': score, 'all': instance_score},
+                'sentence_level_score': {'avg': sentence_score, 'all': sentence_level_score},
+            }
+        else:
+            scores = {
+                'instance_score': {
+                    'avg': score, 
+                    'complex': sum(instance_score[:1000]) / 1000, 
+                    'detail': sum(instance_score[1000:2000]) / 1000, 
+                    'conv': sum(instance_score[2000:]) / 1000, 
+                    'all': instance_score,
+                },
+                'sentence_level_score': {
+                    'avg': sentence_score, 
+                    'complex': sum(sentence_level_score[:1000]) / 1000, 
+                    'detail': sum(sentence_level_score[1000:2000]) / 1000, 
+                    'conv': sum(sentence_level_score[2000:]) / 1000, 
+                    'all': sentence_level_score,
+                },
+            }
+        json_dump(scores, fname.replace('.jsonl', '_scores.json'))
+    except:
+        import ipdb; ipdb.set_trace()
+    # for k, v in scores.items():
+    #     print(f'===== {k} =====')
+    #     for kk, vv in v.items():
+    #         if kk != 'all': continue
+    #         print(kk, vv)
 
 
 if __name__ == '__main__':
@@ -74,17 +78,17 @@ if __name__ == '__main__':
                         api_key='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', 
                         llava_path='liuhaotian/llava-v1.5-13b', 
                         use_llama=False)
-    
-    # cal_faithscore(os.path.join(OUTPUT_DIR, 'faithscore-qa-answer-file-baseline.jsonl'), scorer)
-    # cal_faithscore(os.path.join(OUTPUT_DIR, 'faithscore-qa-answer-file-ours.jsonl'), scorer)
-    # cal_faithscore(os.path.join(OUTPUT_DIR, 'faithscore-qa-answer-file-sherlock-easymix.jsonl'), scorer)
-    # cal_faithscore(os.path.join(OUTPUT_DIR, 'faithscore-qa-answer-file-sherlock.jsonl'), scorer)
-    
-    # cal_faithscore(os.path.join(OUTPUT_DIR, 'faithscore-caption-answer-file-baseline.jsonl'), scorer)
-    # cal_faithscore(os.path.join(OUTPUT_DIR, 'faithscore-caption-answer-file-ours.jsonl'), scorer)
-    # cal_faithscore(os.path.join(OUTPUT_DIR, 'faithscore-caption-answer-file-sherlock.jsonl'), scorer)
-    # cal_faithscore(os.path.join(OUTPUT_DIR, 'faithscore-caption-answer-file-sherlock-easymix.jsonl'), scorer)
 
-    cal_faithscore(os.path.join(OUTPUT_DIR, 'caption-baseline.jsonl'), scorer)
-    cal_faithscore(os.path.join(OUTPUT_DIR, 'qa-baseline.jsonl'), scorer)
+    fnames = sys.argv[1:]
+    if not len(fnames):
+        fnames = [
+            # 'qa-ptx-coco-14k-e1.jsonl',
+            'qa-ptx-vcrcoco-27k-noptx-e1.jsonl',
+            'qa-ptx-vcrcoco-27k-e1.jsonl',
+            'qa-ptx-coco-14k-e2.jsonl',
+            'qa-ptx-vcrcoco-27k-e2.jsonl',
+            'qa-ptx-vcrcoco-27k-noptx-e2.jsonl',
+        ]
+    for fname in fnames:
+        cal_faithscore(os.path.join(OUTPUT_DIR, fname), scorer)
     
