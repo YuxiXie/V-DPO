@@ -124,6 +124,7 @@ class TrainingArguments(transformers.TrainingArguments):
     group_by_modality_length: bool = field(default=False)
     log_project: Optional[str] = None
     per_device_ptx_train_batch_size: int = 128
+    n_random_images: int = 8
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
@@ -1131,6 +1132,23 @@ class DataCollatorForSupervisedDataset(object):
         return batch
 
 
+def get_pure_text(input_ids: torch.Tensor, labels: torch.Tensor):
+    if IMAGE_TOKEN_INDEX in input_ids:
+        img_idx = input_ids.eq(IMAGE_TOKEN_INDEX).nonzero()[0][0].item()
+        txt_input_ids = torch.cat([input_ids[:img_idx], input_ids[img_idx+1:]], dim=0)
+        txt_labels = torch.cat([labels[:img_idx], labels[img_idx+1:]], dim=0)
+    else:
+        txt_input_ids, txt_labels = input_ids, labels
+    return txt_input_ids, txt_labels
+
+
+def get_output(input_ids: torch.Tensor, labels: torch.Tensor, bos_token_id: int):
+    start_idx = labels.ne(IGNORE_INDEX).nonzero()[0][0].item()
+    only_labels = labels[start_idx-1:]
+    only_input_ids = torch.cat([torch.Tensor([bos_token_id]), input_ids[start_idx:]], dim=0)
+    return only_input_ids, only_labels
+
+
 @dataclass
 class DataCollatorForContrastiveDataset(object):
     """Collate examples for contrastive learning."""
@@ -1143,27 +1161,42 @@ class DataCollatorForContrastiveDataset(object):
                                                                         "worse_input_ids", "worse_labels"))
         input_ids = [x for x in better_input_ids] + [x for x in worse_input_ids]
         labels = [x for x in better_labels] + [x for x in worse_labels]
-        input_ids = torch.nn.utils.rnn.pad_sequence(
-            input_ids,
-            batch_first=True,
-            padding_value=self.tokenizer.pad_token_id)
-        labels = torch.nn.utils.rnn.pad_sequence(labels,
-                                                 batch_first=True,
-                                                 padding_value=IGNORE_INDEX)
+        txt_input_ids, txt_labels, out_input_ids, out_labels = [], [], [], []
+        for _input_ids, _labels in zip(input_ids, labels):
+            txt_in, txt_out = get_pure_text(_input_ids, _labels)
+            txt_input_ids.append(txt_in)
+            txt_labels.append(txt_out)
+            _in, _out = get_output(_input_ids, _labels, self.tokenizer.bos_token_id)
+            out_input_ids.append(_in)
+            out_labels.append(_out)
+        input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
+        labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
+        # txt_input_ids = torch.nn.utils.rnn.pad_sequence(txt_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
+        # txt_labels = torch.nn.utils.rnn.pad_sequence(txt_labels, batch_first=True, padding_value=IGNORE_INDEX)
+        # out_input_ids = torch.nn.utils.rnn.pad_sequence(out_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
+        # out_labels = torch.nn.utils.rnn.pad_sequence(out_labels, batch_first=True, padding_value=IGNORE_INDEX)
         better_input_ids, worse_input_ids = input_ids.chunk(chunks=2, dim=0)
         better_labels, worse_labels = labels.chunk(chunks=2, dim=0)
+        # better_txt_input_ids, worse_txt_input_ids = txt_input_ids.chunk(chunks=2, dim=0)
+        # better_out_input_ids, worse_out_input_ids = out_input_ids.chunk(chunks=2, dim=0)
+        # better_txt_labels, worse_txt_labels = txt_labels.chunk(chunks=2, dim=0)
+        # better_out_labels, worse_out_labels = out_labels.chunk(chunks=2, dim=0)
         
-        better_input_ids = better_input_ids[:, :self.tokenizer.model_max_length]
-        better_labels = better_labels[:, :self.tokenizer.model_max_length]
-        worse_input_ids = worse_input_ids[:, :self.tokenizer.model_max_length]
-        worse_labels = worse_labels[:, :self.tokenizer.model_max_length]
         batch = dict(
-            better_input_ids=better_input_ids,
-            better_labels=better_labels,
+            better_input_ids=better_input_ids[:, :self.tokenizer.model_max_length],
+            better_labels=better_labels[:, :self.tokenizer.model_max_length],
             better_attention_mask=better_input_ids.ne(self.tokenizer.pad_token_id),
-            worse_input_ids=worse_input_ids,
-            worse_labels=worse_labels,
+            # better_txt_input_ids=better_txt_input_ids[:, :self.tokenizer.model_max_length],
+            # better_out_input_ids=better_out_input_ids[:, :self.tokenizer.model_max_length],
+            # better_txt_labels=better_txt_labels[:, :self.tokenizer.model_max_length],
+            # better_out_labels=better_out_labels[:, :self.tokenizer.model_max_length],
+            worse_input_ids=worse_input_ids[:, :self.tokenizer.model_max_length],
+            worse_labels=worse_labels[:, :self.tokenizer.model_max_length],
             worse_attention_mask=worse_input_ids.ne(self.tokenizer.pad_token_id),
+            # worse_txt_input_ids=worse_txt_input_ids[:, :self.tokenizer.model_max_length],
+            # worse_out_input_ids=worse_out_input_ids[:, :self.tokenizer.model_max_length],
+            # worse_txt_labels=worse_txt_labels[:, :self.tokenizer.model_max_length],
+            # worse_out_labels=worse_out_labels[:, :self.tokenizer.model_max_length],
         )
 
         if 'image' in instances[0]:

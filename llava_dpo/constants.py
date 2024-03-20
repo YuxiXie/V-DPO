@@ -14,4 +14,4 @@ IMAGE_PLACEHOLDER = "<image-placeholder>"
 
 ADAM_BETAS: tuple[float, float] = (0.9, 0.95)
 
-ASSISTANT_TOKEN_IDS = [319,  1799,  9047, 13566, 29901, 319]
+ASSISTANT_TOKEN_IDS = [319,  1799,  9047, 13566, 29901]

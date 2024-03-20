@@ -20,7 +20,7 @@ from collections import OrderedDict
 from typing_extensions import TypeAlias
 from typing import Any, Callable, Generator, TypeVar, cast
 
-from llava_dpo.constants import LOGDIR
+from llava_dpo.constants import LOGDIR, ASSISTANT_TOKEN_IDS, IMAGE_TOKEN_INDEX, IGNORE_INDEX
 
 server_error_msg = "**NETWORK ERROR DUE TO HIGH TRAFFIC. PLEASE REGENERATE OR REFRESH THIS PAGE.**"
 moderation_msg = "YOUR INPUT VIOLATES OUR CONTENT MODERATION GUIDELINES. PLEASE TRY AGAIN."
@@ -264,3 +264,54 @@ def rank_zero_only(func: Func) -> Func:
         return None
 
     return cast(Func, wrapper)
+
+def get_answer_index(input_ids):
+    assistant_indexes = input_ids.eq(ASSISTANT_TOKEN_IDS[-1]).nonzero()
+    answer_index = assistant_indexes[-1] + 1
+    for idx in assistant_indexes:
+        if input_ids[idx - len(ASSISTANT_TOKEN_IDS) + 1: idx + 1].tolist() == ASSISTANT_TOKEN_IDS:
+            answer_index = idx + 1
+            break
+    return answer_index
+
+def get_indexes(better_input_ids, worse_input_ids, 
+                better_attention_mask, worse_attention_mask,
+                use_answer_index=False):
+    better_end_index = better_attention_mask.nonzero()[-1]
+    worse_end_index = worse_attention_mask.nonzero()[-1]
+    
+    answer_index = get_answer_index(better_input_ids)
+    if not use_answer_index:
+        try:
+            diverge_index = (better_input_ids != worse_input_ids).nonzero()[0]
+        except:
+            # diverge_index = better_input_ids[i].eq(IMAGE_TOKEN_INDEX).nonzero()[0] + 1
+            diverge_index = answer_index
+    try:
+        assert 0 <= diverge_index <= better_end_index, 'diverge index is out of range!'
+        assert 0 <= diverge_index <= worse_end_index, 'diverge index is out of range!'
+    except:
+        better_end_index = max(better_end_index, worse_end_index)
+        worse_end_index = max(better_end_index, worse_end_index)
+    return diverge_index, better_end_index, worse_end_index
+    
+def calculate_log_probs(log_probs, label_mask):
+    return (log_probs * label_mask).sum(dim=-1)
+
+def get_log_probs(input_ids: torch.LongTensor, labels: torch.LongTensor, 
+                  log_probs: torch.Tensor, is_answer=False, pad_token_id=0):
+    end_index = input_ids.ne(pad_token_id).nonzero()[-1]
+    start_index = 1
+    if is_answer:
+        start_index = get_answer_index(input_ids)
+    label_mask = torch.logical_and(labels.ne(IMAGE_TOKEN_INDEX), labels.ne(IGNORE_INDEX))[1:]
+    return calculate_log_probs(log_probs[slice(start_index - 1, end_index)],
+                               label_mask[slice(start_index - 1, end_index)])
+
+def sample_random_image(shape, image_mean=torch.tensor([0.48145466, 0.4578275, 0.40821073]),
+                        image_std=torch.tensor([0.26862954, 0.26130258, 0.27577711])):
+    random_img = torch.empty(*shape)
+    random_img = torch.randn_like(random_img)    
+    for i in range(3):
+        random_img[i] = (random_img[i] * image_std[i]) + image_mean[i]
+    return random_img
