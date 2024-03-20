@@ -731,14 +731,15 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             if not steps_trained_in_current_epoch:
                 _step = int(self.args.resume_from_ckpt.split('/')[-1].replace('steps', '').split('-')[-1])
                 steps_trained_in_current_epoch = _step
-                progress_bar.update(steps_trained_in_current_epoch)
         
         num_prompt_only_batches = len(self.train_dataloader)
         num_ptx_batches = len(self.ptx_train_dataloader)
         num_ptx_replicas = (num_prompt_only_batches + num_ptx_batches - 1) // num_ptx_batches
         
         for epoch in range(self.args.num_train_epochs):
-            if epoch < epochs_trained: continue
+            if epoch < epochs_trained:
+                progress_bar.update(len(self.train_dataloader))
+                continue
             self.model.train()
             for batch, ptx_batch in zip(
                 self.train_dataloader,
