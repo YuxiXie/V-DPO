@@ -265,9 +265,19 @@ def rank_zero_only(func: Func) -> Func:
 
     return cast(Func, wrapper)
 
-def get_answer_index(input_ids):
+def is_multi_turn(input_ids):
     assistant_indexes = input_ids.eq(ASSISTANT_TOKEN_IDS[-1]).nonzero()
+    cnt = 0
+    for idx in assistant_indexes:
+        if input_ids[idx - len(ASSISTANT_TOKEN_IDS) + 1: idx + 1].tolist() == ASSISTANT_TOKEN_IDS:
+            cnt += 1
+    return cnt
+
+def get_answer_index(input_ids, final_answer=False):
+    assistant_indexes = input_ids.eq(ASSISTANT_TOKEN_IDS[-1]).nonzero()
+    assistant_indexes = [_ for _ in assistant_indexes]
     answer_index = assistant_indexes[-1] + 1
+    assistant_indexes = assistant_indexes[::-1] if final_answer else assistant_indexes
     for idx in assistant_indexes:
         if input_ids[idx - len(ASSISTANT_TOKEN_IDS) + 1: idx + 1].tolist() == ASSISTANT_TOKEN_IDS:
             answer_index = idx + 1
@@ -280,7 +290,7 @@ def get_indexes(better_input_ids, worse_input_ids,
     better_end_index = better_attention_mask.nonzero()[-1]
     worse_end_index = worse_attention_mask.nonzero()[-1]
     
-    answer_index = get_answer_index(better_input_ids)
+    answer_index = get_answer_index(better_input_ids, final_answer=True)
     if not use_answer_index:
         try:
             diverge_index = (better_input_ids != worse_input_ids).nonzero()[0]
@@ -299,11 +309,12 @@ def calculate_log_probs(log_probs, label_mask):
     return (log_probs * label_mask).sum(dim=-1)
 
 def get_log_probs(input_ids: torch.LongTensor, labels: torch.LongTensor, 
-                  log_probs: torch.Tensor, is_answer=False, pad_token_id=0):
+                  log_probs: torch.Tensor, is_answer=False, 
+                  pad_token_id=0, final_answer=True):
     end_index = input_ids.ne(pad_token_id).nonzero()[-1]
     start_index = 1
     if is_answer:
-        start_index = get_answer_index(input_ids)
+        start_index = get_answer_index(input_ids, final_answer=final_answer)
     label_mask = torch.logical_and(labels.ne(IMAGE_TOKEN_INDEX), labels.ne(IGNORE_INDEX))[1:]
     return calculate_log_probs(log_probs[slice(start_index - 1, end_index)],
                                label_mask[slice(start_index - 1, end_index)])

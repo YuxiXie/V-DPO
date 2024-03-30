@@ -38,7 +38,16 @@ from llava_dpo.logger import Logger
 from llava_dpo.constants import ADAM_BETAS, IMAGE_TOKEN_INDEX, IGNORE_INDEX, ASSISTANT_TOKEN_IDS
 from llava_dpo.model.utils import gather_log_probabilities
 from llava_dpo.model import LlavaLlamaForCausalLM
-from llava_dpo.utils import is_main_process, to_device, get_all_reduce_mean, get_indexes, calculate_log_probs, get_log_probs, sample_random_image
+from llava_dpo.utils import (
+    is_main_process, 
+    to_device, 
+    get_all_reduce_mean, 
+    get_indexes, 
+    calculate_log_probs, 
+    get_log_probs, 
+    sample_random_image,
+    is_multi_turn,
+)
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
@@ -502,14 +511,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         worse_labels: torch.LongTensor,
         worse_attention_mask: torch.BoolTensor,
         images: torch.Tensor,
-        better_txt_input_ids: torch.LongTensor = None,
-        better_txt_labels: torch.LongTensor = None,
-        better_out_input_ids: torch.LongTensor = None,
-        better_out_labels: torch.LongTensor = None,
-        worse_txt_input_ids: torch.LongTensor = None,
-        worse_txt_labels: torch.LongTensor = None,
-        worse_out_input_ids: torch.LongTensor = None,
-        worse_out_labels: torch.LongTensor = None,
+        category_ids: torch.Tensor = None,
     ) -> dict[str, Any]:
         """Loss function for the DPO algorithm.
 
@@ -563,6 +565,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             fake_images = torch.stack([
                 sample_random_image(images.shape[1:]) for _ in range(images.size(0))
             ], dim=0).to(images.device)
+            torch.cuda.empty_cache()
             randimg_sequence_log_probs = self.compute_log_probs(
                 self.model.module,
                 input_ids=input_ids,
@@ -573,6 +576,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             randimg_better_log_probs, randimg_worse_log_probs = randimg_sequence_log_probs.chunk(chunks=2, dim=0)  # size = (B, L - 1)
             randimg_better_log_probs_list.append(randimg_better_log_probs)
             randimg_worse_log_probs_list.append(randimg_worse_log_probs)
+            torch.cuda.empty_cache()
             with torch.no_grad():
                 ref_randimg_sequence_log_probs = self.compute_log_probs(
                     self.reference_model.module,
@@ -598,18 +602,23 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             try:
                 assert not equal_text or not equal_img, 'The better and worse samples are the same!'
             except:
+                print(self.tokenizer.decode(input_ids[i]))
                 import ipdb; ipdb.set_trace()
-                
+            
+            coeff = 1
+            if category_ids[i].eq(0):
+                coeff = self.args.instruct_coef
+            
             # better-worse logprobs / ref-logprobs: p(y|x,i)
             ith_better_log_probs = get_log_probs(better_input_ids[i], better_labels[i], better_log_probs[i], is_answer=True)
-            ith_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], worse_log_probs[i], is_answer=True)
+            ith_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], worse_log_probs[i], is_answer=True, final_answer=True)
             ith_ref_better_log_probs = get_log_probs(better_input_ids[i], better_labels[i], ref_better_log_probs[i], is_answer=True)
-            ith_ref_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], ref_worse_log_probs[i], is_answer=True)
+            ith_ref_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], ref_worse_log_probs[i], is_answer=True, final_answer=True)
             # better-worse logprobs with random noise: p(y|x,e) -- p(y|x)
             ith_rimg_better_log_probs = get_log_probs(better_input_ids[i], better_labels[i], randimg_better_log_probs[i], is_answer=True)
-            ith_rimg_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], randimg_worse_log_probs[i], is_answer=True)
+            ith_rimg_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], randimg_worse_log_probs[i], is_answer=True, final_answer=True)
             ith_ref_rimg_better_log_probs = get_log_probs(better_input_ids[i], better_labels[i], ref_randimg_better_log_probs[i], is_answer=True)
-            ith_ref_rimg_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], ref_randimg_worse_log_probs[i], is_answer=True)
+            ith_ref_rimg_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], ref_randimg_worse_log_probs[i], is_answer=True, final_answer=True)
             better_img_contributions_rand.append(ith_better_log_probs - ith_rimg_better_log_probs)
             worse_img_contributions_rand.append(ith_worse_log_probs - ith_rimg_worse_log_probs)
             # better <-> random
@@ -637,13 +646,17 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             logits = better_log_ratio - worse_log_ratio
             
             if self.args.ipo:
-                losses.append((logits - 1 / (2 * self.scale_coeff)) ** 2)
-                losses.append((better_rand_logits - 1 / (2 * self.scale_coeff)) ** 2)
-                losses.append((worse_rand_logits - 1 / (2 * self.scale_coeff)) ** 2)
+                losses.append(coeff * ((logits - 1 / (2 * self.scale_coeff)) ** 2))
+                if not images[i].eq(0).all():
+                    losses.append(coeff * ((better_rand_logits - 1 / (2 * self.scale_coeff)) ** 2))
+                    if category_ids[i].ne(0):
+                        losses.append(coeff * ((worse_rand_logits - 1 / (2 * self.scale_coeff)) ** 2))
             else:
-                losses.append(-F.logsigmoid(self.scale_coeff * logits))
-                losses.append(-F.logsigmoid(self.scale_coeff * better_rand_logits))
-                losses.append(-F.logsigmoid(self.scale_coeff * worse_rand_logits))
+                losses.append(coeff * (-F.logsigmoid(self.scale_coeff * logits)))
+                if not images[i].eq(0).all():
+                    losses.append(coeff * (-F.logsigmoid(self.scale_coeff * better_rand_logits)))
+                    if category_ids[i].ne(0):
+                        losses.append(coeff * (-F.logsigmoid(self.scale_coeff * worse_rand_logits)))
             better_sample_rewards.append(self.scale_coeff * better_log_ratio.detach())
             worse_sample_rewards.append(self.scale_coeff * worse_log_ratio.detach())
         
@@ -656,7 +669,6 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         better_sample_rewards = better_sample_rewards.mean()  # size = ()
         worse_sample_rewards = worse_sample_rewards.mean()  # size = ()
         rewards_margin = better_sample_rewards - worse_sample_rewards
-        
         better_img_contributions_rand = torch.stack(better_img_contributions_rand).mean()
         worse_img_contributions_rand = torch.stack(worse_img_contributions_rand).mean()
         

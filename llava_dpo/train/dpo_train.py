@@ -111,6 +111,7 @@ class TrainingArguments(transformers.TrainingArguments):
         metadata={"help": "How many bits to use."}
     )
     ptx_coef: float = 0.1
+    instruct_coef: float = 0.5
     scale_coeff: float = .01
     resume_from_ckpt: Optional[str] = None
     ipo: bool = False
@@ -660,9 +661,9 @@ def preprocess_v1(
             else:
                 round_len = len(tokenizer(rou).input_ids)
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-            if i > 0:
-                round_len -= 1
-                instruction_len -= 1
+            # if i > 0:
+            #     round_len -= 1
+            #     instruction_len -= 1
 
             target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
 
@@ -766,8 +767,9 @@ def preprocess_contrastive_v1(
             else:
                 round_len = len(tokenizer(rou).input_ids)
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-            if i > 0:
-                instruction_len -= 1
+            # if i > 0:
+            #     round_len -= 1
+            #     instruction_len -= 1
 
             target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
 
@@ -1095,6 +1097,7 @@ class LazyContrastiveDataset(LazySupervisedDataset):
             # image does not exist in the data, but the model is multimodal
             crop_size = self.data_args.image_processor.crop_size
             data_dict['image'] = torch.zeros(2, 3, crop_size['height'], crop_size['width'])
+        data_dict['category'] = self.list_data_dict[i].get('category', 'default')
         return data_dict
 
 
@@ -1156,9 +1159,10 @@ class DataCollatorForContrastiveDataset(object):
     tokenizer: transformers.PreTrainedTokenizer
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
-        better_input_ids, better_labels, worse_input_ids, worse_labels = \
+        better_input_ids, better_labels, worse_input_ids, worse_labels, category = \
             tuple([instance[key] for instance in instances] for key in ("better_input_ids", "better_labels",
-                                                                        "worse_input_ids", "worse_labels"))
+                                                                        "worse_input_ids", "worse_labels", 
+                                                                        "category"))
         input_ids = [x for x in better_input_ids] + [x for x in worse_input_ids]
         labels = [x for x in better_labels] + [x for x in worse_labels]
         txt_input_ids, txt_labels, out_input_ids, out_labels = [], [], [], []
@@ -1171,32 +1175,20 @@ class DataCollatorForContrastiveDataset(object):
             out_labels.append(_out)
         input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
-        # txt_input_ids = torch.nn.utils.rnn.pad_sequence(txt_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
-        # txt_labels = torch.nn.utils.rnn.pad_sequence(txt_labels, batch_first=True, padding_value=IGNORE_INDEX)
-        # out_input_ids = torch.nn.utils.rnn.pad_sequence(out_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
-        # out_labels = torch.nn.utils.rnn.pad_sequence(out_labels, batch_first=True, padding_value=IGNORE_INDEX)
         better_input_ids, worse_input_ids = input_ids.chunk(chunks=2, dim=0)
         better_labels, worse_labels = labels.chunk(chunks=2, dim=0)
-        # better_txt_input_ids, worse_txt_input_ids = txt_input_ids.chunk(chunks=2, dim=0)
-        # better_out_input_ids, worse_out_input_ids = out_input_ids.chunk(chunks=2, dim=0)
-        # better_txt_labels, worse_txt_labels = txt_labels.chunk(chunks=2, dim=0)
-        # better_out_labels, worse_out_labels = out_labels.chunk(chunks=2, dim=0)
+        
+        txt2id = {'instruct': 0, 'region': 1, 'vqa': 2}
+        category_ids = torch.Tensor([txt2id[x] for x in category]).unsqueeze(-1)
         
         batch = dict(
             better_input_ids=better_input_ids[:, :self.tokenizer.model_max_length],
             better_labels=better_labels[:, :self.tokenizer.model_max_length],
             better_attention_mask=better_input_ids.ne(self.tokenizer.pad_token_id),
-            # better_txt_input_ids=better_txt_input_ids[:, :self.tokenizer.model_max_length],
-            # better_out_input_ids=better_out_input_ids[:, :self.tokenizer.model_max_length],
-            # better_txt_labels=better_txt_labels[:, :self.tokenizer.model_max_length],
-            # better_out_labels=better_out_labels[:, :self.tokenizer.model_max_length],
             worse_input_ids=worse_input_ids[:, :self.tokenizer.model_max_length],
             worse_labels=worse_labels[:, :self.tokenizer.model_max_length],
             worse_attention_mask=worse_input_ids.ne(self.tokenizer.pad_token_id),
-            # worse_txt_input_ids=worse_txt_input_ids[:, :self.tokenizer.model_max_length],
-            # worse_out_input_ids=worse_out_input_ids[:, :self.tokenizer.model_max_length],
-            # worse_txt_labels=worse_txt_labels[:, :self.tokenizer.model_max_length],
-            # worse_out_labels=worse_out_labels[:, :self.tokenizer.model_max_length],
+            category_ids=category_ids,
         )
 
         if 'image' in instances[0]:
