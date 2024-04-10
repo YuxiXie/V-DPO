@@ -305,19 +305,26 @@ def get_indexes(better_input_ids, worse_input_ids,
         worse_end_index = max(better_end_index, worse_end_index)
     return diverge_index, better_end_index, worse_end_index
     
-def calculate_log_probs(log_probs, label_mask):
+def calculate_log_probs(log_probs, label_mask, return_average=False):
+    if return_average:
+        return (log_probs * label_mask).sum(dim=-1) / label_mask.sum(dim=-1)
     return (log_probs * label_mask).sum(dim=-1)
 
 def get_log_probs(input_ids: torch.LongTensor, labels: torch.LongTensor, 
                   log_probs: torch.Tensor, is_answer=False, 
-                  pad_token_id=0, final_answer=True):
+                  pad_token_id=0, final_answer=True, return_len=False,
+                  return_average=False):
     end_index = input_ids.ne(pad_token_id).nonzero()[-1]
     start_index = 1
     if is_answer:
         start_index = get_answer_index(input_ids, final_answer=final_answer)
     label_mask = torch.logical_and(labels.ne(IMAGE_TOKEN_INDEX), labels.ne(IGNORE_INDEX))[1:]
-    return calculate_log_probs(log_probs[slice(start_index - 1, end_index)],
-                               label_mask[slice(start_index - 1, end_index)])
+    lp = calculate_log_probs(log_probs[slice(start_index - 1, end_index)],
+                             label_mask[slice(start_index - 1, end_index)],
+                             return_average=return_average)
+    if return_len:
+        return lp, label_mask[slice(start_index - 1, end_index)].sum()
+    return lp
 
 def sample_random_image(shape, image_mean=torch.tensor([0.48145466, 0.4578275, 0.40821073]),
                         image_std=torch.tensor([0.26862954, 0.26130258, 0.27577711])):

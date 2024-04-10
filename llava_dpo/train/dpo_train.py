@@ -115,6 +115,7 @@ class TrainingArguments(transformers.TrainingArguments):
     scale_coeff: float = .01
     resume_from_ckpt: Optional[str] = None
     ipo: bool = False
+    kto: bool = False
     lora_enable: bool = False
     lora_r: int = 64
     lora_alpha: int = 16
@@ -661,9 +662,9 @@ def preprocess_v1(
             else:
                 round_len = len(tokenizer(rou).input_ids)
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-            # if i > 0:
-            #     round_len -= 1
-            #     instruction_len -= 1
+            if i > 0:
+                round_len -= 1
+                instruction_len -= 1
 
             target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
 
@@ -767,9 +768,9 @@ def preprocess_contrastive_v1(
             else:
                 round_len = len(tokenizer(rou).input_ids)
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-            # if i > 0:
-            #     round_len -= 1
-            #     instruction_len -= 1
+            if i > 0:
+                round_len -= 1
+                instruction_len -= 1
 
             target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
 
@@ -778,6 +779,7 @@ def preprocess_contrastive_v1(
         
         if cur_len < tokenizer.model_max_length:
             if cur_len != total_len:
+                import ipdb; ipdb.set_trace()
                 target[:] = IGNORE_INDEX
                 print(
                     f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
@@ -1178,7 +1180,11 @@ class DataCollatorForContrastiveDataset(object):
         better_input_ids, worse_input_ids = input_ids.chunk(chunks=2, dim=0)
         better_labels, worse_labels = labels.chunk(chunks=2, dim=0)
         
-        txt2id = {'instruct': 0, 'region': 1, 'vqa': 2}
+        txt2id = {
+            'instruct': 0, 'region': 1, 'vqa': 2,
+            'instructions': 0, 'vcr_txt_pair': -1, 'coco_txt_pair': -2, 'sherlock_txt_pair': -3,
+            'vcr_img_pair': -4, 'coco_img_pair': -5, 'sherlock_img_pair': -6, 'sherlock_img_pair_inf': -7,
+        }
         category_ids = torch.Tensor([txt2id[x] for x in category]).unsqueeze(-1)
         
         batch = dict(
