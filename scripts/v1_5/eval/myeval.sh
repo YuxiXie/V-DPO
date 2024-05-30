@@ -1,36 +1,26 @@
 #!/bin/bash
 
-IDX=2
+IDX=0
 
-# CUDA_VISIBLE_DEVICES=$IDX python -m llava.eval.model_vqa \
-#     --model-path \
-#     /mnt/data/yuxi/llava/outputs/llava-v1.5-7b-dpo-test/checkpoint-1000 \
-#     --question-file \
-#     playground/data/coco2014_val_qa_eval/qa90_questions.jsonl \
-#     --image-folder \
-#     /mnt/data/yuxi/coco/coco2014/val2014 \
-#     --answers-file \
-#     /mnt/data/yuxi/dpo_llava/outputs/predictions/answer-file-sherlock.jsonl
-
-# CUDA_VISIBLE_DEVICES=$IDX python -m llava.eval.model_vqa \
-#     --model-path \
-#     liuhaotian/llava-v1.5-7b \
-#     --question-file \
-#     /mnt/data/yuxi/shikra/data/coco_pope_popular.jsonl \
-#     --image-folder \
-#     /mnt/data/yuxi/coco/coco2014/val2014 \
-#     --answers-file \
-#     /mnt/data/yuxi/dpo_llava/outputs/predictions/pope-popular-answer-file-baseline.jsonl
-
-CUDA_VISIBLE_DEVICES=$IDX python -m llava.eval.model_vqa \
+CUDA_VISIBLE_DEVICES=$IDX python -m llava_dpo.eval.model_vqa \
     --model-path \
-    liuhaotian/llava-v1.5-7b \
+    /home/users/nus/e0672129/scratch/LLaVA-DPO/outputs/experiments/llava/imp_sml/rlhfv-llava-dpo-noweight/checkpoint-1432 \
     --question-file \
-    /home/yuxi/Projects/LLaVA-DPO/playground/data/faithscore/test_qa_1000x3.jsonl \
+    ./playground/data/amber_query.jsonl \
     --image-folder \
-    /mnt/data/yuxi/coco/coco2014/val2014 \
+    /home/users/nus/e0672129/scratch/AMBER/data/image \
     --answers-file \
-    /mnt/data/yuxi/dpo_llava/outputs/predictions/faithscore-qa-answer-file-baseline.jsonl
+    /home/users/nus/e0672129/scratch/LLaVA-DPO/outputs/predictions/amber/weight-rlhfv-llava-dpo-noweight-e4.jsonl
+
+CUDA_VISIBLE_DEVICES=$IDX python -m llava_dpo.eval.model_vqa \
+    --model-path \
+    /home/users/nus/e0672129/scratch/LLaVA-DPO/outputs/experiments/llava/imp_sml/rlhfv-llava-dpo-cfg/checkpoint-2860 \
+    --question-file \
+    ./playground/data/amber_query.jsonl \
+    --image-folder \
+    /home/users/nus/e0672129/scratch/AMBER/data/image \
+    --answers-file \
+    /home/users/nus/e0672129/scratch/LLaVA-DPO/outputs/predictions/amber/weight-rlhfv-llava-dpo-cfg-e4.jsonl
 
 # liuhaotian/llava-v1.5-7b
 # /mnt/data/yuxi/llava/outputs/llava-v1.5-7b-dpo-myfilter/checkpoint-3072

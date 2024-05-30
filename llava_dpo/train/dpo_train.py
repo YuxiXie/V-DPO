@@ -51,7 +51,8 @@ def rank0_print(*args):
 
 @dataclass
 class ModelArguments:
-    model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
+    model_name_or_path: Optional[str] = field(default="liuhaotian/llava-v1.5-7b")
+    ref_model_name_or_path: Optional[str] = field(default="liuhaotian/llava-v1.5-7b")
     version: Optional[str] = field(default="v0")
     freeze_backbone: bool = field(default=False)
     tune_mm_mlp_adapter: bool = field(default=False)
@@ -91,6 +92,10 @@ class TrainingArguments(transformers.TrainingArguments):
     remove_unused_columns: bool = field(default=False)
     freeze_mm_mlp_adapter: bool = field(default=False)
     mpt_attn_impl: Optional[str] = field(default="triton")
+    
+    tune_visual_abstractor: bool = field(default=True)
+    freeze_vision_model: bool = field(default=True)
+    
     model_max_length: int = field(
         default=512,
         metadata={
@@ -110,9 +115,22 @@ class TrainingArguments(transformers.TrainingArguments):
         default=16,
         metadata={"help": "How many bits to use."}
     )
+    gamma: float = 1
+    lbwl: bool = False
+    wlcoef: bool = False
+    weighted_coef: bool = False
+    sentence_level: bool = False
+    need_eval: bool = False
     ptx_coef: float = 0.1
-    instruct_coef: float = 0.5
+    instruct_coef: float = 1.0
+    region_coef: float = 1.0
+    vqa_coef: float = 1.0
     scale_coeff: float = .01
+    label_smoothing: float = 0
+    not_dynamic: bool = False
+    weighted_logits: bool = False
+    dynamic_label_smoothing: bool = False
+    language_bias_reduce: bool = False
     resume_from_ckpt: Optional[str] = None
     ipo: bool = False
     kto: bool = False
@@ -123,6 +141,9 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_weight_path: str = ""
     lora_bias: str = "none"
     mm_projector_lr: Optional[float] = None
+    
+    visual_abstractor_lr: Optional[float] = None
+    
     group_by_modality_length: bool = field(default=False)
     log_project: Optional[str] = None
     per_device_ptx_train_batch_size: int = 128
@@ -662,9 +683,9 @@ def preprocess_v1(
             else:
                 round_len = len(tokenizer(rou).input_ids)
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-            if i > 0:
-                round_len -= 1
-                instruction_len -= 1
+            # if i > 0:
+            #     round_len -= 1
+            #     instruction_len -= 1
 
             target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
 
@@ -768,9 +789,9 @@ def preprocess_contrastive_v1(
             else:
                 round_len = len(tokenizer(rou).input_ids)
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-            if i > 0:
-                round_len -= 1
-                instruction_len -= 1
+            # if i > 0:
+            #     round_len -= 1
+            #     instruction_len -= 1
 
             target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
 
@@ -779,7 +800,6 @@ def preprocess_contrastive_v1(
         
         if cur_len < tokenizer.model_max_length:
             if cur_len != total_len:
-                import ipdb; ipdb.set_trace()
                 target[:] = IGNORE_INDEX
                 print(
                     f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
@@ -1100,6 +1120,10 @@ class LazyContrastiveDataset(LazySupervisedDataset):
             crop_size = self.data_args.image_processor.crop_size
             data_dict['image'] = torch.zeros(2, 3, crop_size['height'], crop_size['width'])
         data_dict['category'] = self.list_data_dict[i].get('category', 'default')
+        if 'clip_scores' in self.list_data_dict[i]:
+            data_dict['confidence'] = self.list_data_dict[i]['clip_scores'][0] / (self.list_data_dict[i]['clip_scores'][0] + self.list_data_dict[i]['clip_scores'][1])
+        else:
+            data_dict['confidence'] = .8
         return data_dict
 
 
@@ -1161,10 +1185,10 @@ class DataCollatorForContrastiveDataset(object):
     tokenizer: transformers.PreTrainedTokenizer
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
-        better_input_ids, better_labels, worse_input_ids, worse_labels, category = \
+        better_input_ids, better_labels, worse_input_ids, worse_labels, category, confidence = \
             tuple([instance[key] for instance in instances] for key in ("better_input_ids", "better_labels",
                                                                         "worse_input_ids", "worse_labels", 
-                                                                        "category"))
+                                                                        "category", "confidence"))
         input_ids = [x for x in better_input_ids] + [x for x in worse_input_ids]
         labels = [x for x in better_labels] + [x for x in worse_labels]
         txt_input_ids, txt_labels, out_input_ids, out_labels = [], [], [], []
@@ -1184,8 +1208,10 @@ class DataCollatorForContrastiveDataset(object):
             'instruct': 0, 'region': 1, 'vqa': 2,
             'instructions': 0, 'vcr_txt_pair': -1, 'coco_txt_pair': -2, 'sherlock_txt_pair': -3,
             'vcr_img_pair': -4, 'coco_img_pair': -5, 'sherlock_img_pair': -6, 'sherlock_img_pair_inf': -7,
+            'default': 0,
         }
         category_ids = torch.Tensor([txt2id[x] for x in category]).unsqueeze(-1)
+        confidence = torch.Tensor(confidence).unsqueeze(-1)
         
         batch = dict(
             better_input_ids=better_input_ids[:, :self.tokenizer.model_max_length],
@@ -1195,6 +1221,7 @@ class DataCollatorForContrastiveDataset(object):
             worse_labels=worse_labels[:, :self.tokenizer.model_max_length],
             worse_attention_mask=worse_input_ids.ne(self.tokenizer.pad_token_id),
             category_ids=category_ids,
+            confidence=confidence,
         )
 
         if 'image' in instances[0]:
@@ -1276,7 +1303,7 @@ def train():
                 **bnb_model_from_pretrained_args
             )
             ref_model = LlavaLlamaForCausalLM.from_pretrained(
-                model_args.model_name_or_path,
+                model_args.ref_model_name_or_path,
                 cache_dir=training_args.cache_dir,
                 **bnb_model_from_pretrained_args
             )
@@ -1445,6 +1472,7 @@ def train():
         fp16=ds_train_config['fp16']['enabled'],
         bf16=ds_train_config['bf16']['enabled'],
     )
+    training_args.model_name_or_path = model_args.model_name_or_path
     trainer = DPOLLaVATrainer(
         training_args,
         model, 

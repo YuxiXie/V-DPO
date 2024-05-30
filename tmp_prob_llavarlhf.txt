@@ -1,0 +1,18 @@
+/home/users/nus/e0672129/.conda/envs/llava-dpo-copy/lib/python3.10/site-packages/bitsandbytes/libbitsandbytes_cpu.so: undefined symbol: cadam32bit_grad_fp32
+[2024-05-30 04:41:53,033] [INFO] [real_accelerator.py:191:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+==============
+instructions 9.855112768340111e-05 8.2055131466372e-05 0.0 | 9332
+==============
+instructions 0.00010228837582664268 8.505070459203067e-05 0.0 | 9332
+==============
+instructions 7.991087938003197e-05 7.173190842489068e-05 0.0 | 9332
+==============
+instructions 8.140870730680407e-05 7.202825045760268e-05 0.0 | 9332
+==============
+instructions 1.0281483494559245 0.9686593937213884 0.4624946420917274 | 9332
+==============
+instructions 1.2437599074992831 1.1595446906934463 0.6483069009858551 | 9332
+==============
+instructions 1.2704365001461995 1.1860874331802778 0.6678096870981569 | 9332
+==============
+instructions 0.8000000000001232 0.8 1.0

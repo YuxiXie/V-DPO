@@ -68,14 +68,26 @@ if __name__ == "__main__":
     parser.add_argument("--result-file", type=str)
     args = parser.parse_args()
 
+    category_index = {
+        'random': 0,
+        'popular': 1,
+        'adversarial': 2,
+    }
     questions = [json.loads(line) for line in open(args.question_file)]
-    questions = {question['question_id']: question for question in questions}
+    questions = {question['question_id'] + category_index[question['category']] * 3000: question for question in questions}
     answers = [json.loads(q) for q in open(args.result_file)]
+    all_answers = []
     for file in os.listdir(args.annotation_dir):
         assert file.startswith('coco_pope_')
         assert file.endswith('.json')
         category = file[10:-5]
-        cur_answers = [x for x in answers if questions[x['question_id']]['category'] == category]
+        if category == 'all':
+            continue
+        cur_answers = [x for i, x in enumerate(answers) if questions[x['question_id'] + (i // 3000) * 3000]['category'] == category]
+        all_answers += cur_answers
+        if not len(cur_answers): continue
         print('Category: {}, # samples: {}'.format(category, len(cur_answers)))
         eval_pope(cur_answers, os.path.join(args.annotation_dir, file))
         print("====================================")
+
+    eval_pope(all_answers, os.path.join(args.annotation_dir, 'coco_pope_all.json'))

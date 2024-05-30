@@ -253,6 +253,12 @@ def get_all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
         dist.all_reduce(tensor, op=dist.ReduceOp.AVG)
     return tensor
 
+def get_all_reduce_max(tensor: torch.Tensor) -> torch.Tensor:
+    """Perform all-reduce operation on a tensor cross all ranks and return the max."""
+    if dist.is_initialized():
+        dist.all_reduce(tensor, op=dist.ReduceOp.MAX)
+    return tensor
+
 
 def rank_zero_only(func: Func) -> Func:
     """Decorator to make a function only run on the main process."""
@@ -305,20 +311,31 @@ def get_indexes(better_input_ids, worse_input_ids,
         worse_end_index = max(better_end_index, worse_end_index)
     return diverge_index, better_end_index, worse_end_index
     
-def calculate_log_probs(log_probs, label_mask, return_average=False):
+def calculate_log_probs(log_probs, label_mask, randimg_log_probs=None, gamma=1,
+                        return_average=False, conf_from_vis=None, sentence_level=False):
+    if randimg_log_probs is not None and gamma != 1:
+        log_probs = gamma * log_probs - (gamma - 1) * randimg_log_probs.detach()
+    if conf_from_vis is not None:
+        if sentence_level:
+            conf = conf_from_vis.mean().clamp(min=-1, max=1).exp().detach()
+        else:
+            conf = conf_from_vis.clamp(min=-1, max=1).exp().detach()
+        log_probs = log_probs * conf
     if return_average:
         return (log_probs * label_mask).sum(dim=-1) / label_mask.sum(dim=-1)
     return (log_probs * label_mask).sum(dim=-1)
 
 def get_log_probs(input_ids: torch.LongTensor, labels: torch.LongTensor, 
-                  log_probs: torch.Tensor, is_answer=False, 
+                  log_probs: torch.Tensor, label_mask: torch.BoolTensor = None,
+                  is_answer=False, 
                   pad_token_id=0, final_answer=True, return_len=False,
                   return_average=False):
     end_index = input_ids.ne(pad_token_id).nonzero()[-1]
     start_index = 1
     if is_answer:
         start_index = get_answer_index(input_ids, final_answer=final_answer)
-    label_mask = torch.logical_and(labels.ne(IMAGE_TOKEN_INDEX), labels.ne(IGNORE_INDEX))[1:]
+    if label_mask is None:
+        label_mask = torch.logical_and(labels.ne(IMAGE_TOKEN_INDEX), labels.ne(IGNORE_INDEX))[1:]
     lp = calculate_log_probs(log_probs[slice(start_index - 1, end_index)],
                              label_mask[slice(start_index - 1, end_index)],
                              return_average=return_average)
