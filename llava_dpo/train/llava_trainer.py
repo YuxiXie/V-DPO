@@ -36,7 +36,7 @@ from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
 from llava_dpo.logger import Logger
 from llava_dpo.constants import ADAM_BETAS, IMAGE_TOKEN_INDEX, IGNORE_INDEX, ASSISTANT_TOKEN_IDS
-from llava_dpo.model.utils import gather_log_probabilities
+from llava_dpo.model.utils import gather_log_probabilities, gather_log_probabilities_for_cfg
 from llava_dpo.model import LlavaLlamaForCausalLM
 from llava_dpo.utils import (
     is_main_process, 
@@ -48,6 +48,7 @@ from llava_dpo.utils import (
     get_log_probs, 
     sample_random_image,
     is_multi_turn,
+    get_answer_index,
 )
 
 
@@ -495,8 +496,8 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         self._created_lr_scheduler = True
         return self.lr_scheduler
     
-    @staticmethod
     def compute_log_probs(
+        self,
         model: LlavaLlamaForCausalLM,
         input_ids: torch.LongTensor,
         attention_mask: torch.BoolTensor,
@@ -505,7 +506,8 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
     ) -> torch.Tensor:
         """Compute log probabilities of given sequences."""
         logits = model(input_ids, attention_mask=attention_mask, images=images).logits
-        return gather_log_probabilities(logits[:, :-1], labels[:, 1:])
+        return gather_log_probabilities(logits[:, :-1], labels[:, 1:]), \
+            (logits[:, :-1] if self.args.gamma != 1 and self.args.use_logits else None)
     
     @torch.no_grad()
     def eval_step(
@@ -533,7 +535,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         labels = (labels * label_mask).long()
         label_mask = label_mask[:, 1:]
         
-        sequence_log_probs = self.compute_log_probs(
+        sequence_log_probs, _ = self.compute_log_probs(
             self.model.module,
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -545,7 +547,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             fake_images = torch.stack([
                 sample_random_image(images.shape[1:]) for _ in range(images.size(0))
             ], dim=0).to(images.device)
-            randimg_sequence_log_probs = self.compute_log_probs(
+            randimg_sequence_log_probs, _ = self.compute_log_probs(
                 self.model.module,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -555,7 +557,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             randimg_sequence_log_probs_list.append(randimg_sequence_log_probs)
         if self.args.n_random_images == 0:
             fake_images = torch.zeros_like(images).to(images.device)
-            randimg_sequence_log_probs = self.compute_log_probs(
+            randimg_sequence_log_probs, _ = self.compute_log_probs(
                 self.model.module,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -605,7 +607,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         labels = (labels * label_mask).long()
         better_label_mask, worse_label_mask = label_mask[:, 1:].chunk(chunks=2, dim=0)
         
-        sequence_log_probs = self.compute_log_probs(
+        sequence_log_probs, sequence_logits  = self.compute_log_probs(
             self.model.module,
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -616,7 +618,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         
         self.reference_model.eval()
         with torch.no_grad():
-            ref_sequence_log_probs = self.compute_log_probs(
+            ref_sequence_log_probs, _ = self.compute_log_probs(
                 self.reference_model.module,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -627,6 +629,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         
         randimg_better_log_probs_list, randimg_worse_log_probs_list = [], []
         ref_randimg_better_log_probs_list, ref_randimg_worse_log_probs_list = [], []
+        randimg_logits_list = []
         for _ in range(self.args.n_random_images + 1):
             if len(randimg_better_log_probs_list) >= self.args.n_random_images > 0: break
             fake_images = torch.zeros_like(images).to(images.device) if self.args.n_random_images == 0 else \
@@ -634,37 +637,46 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
                     sample_random_image(images.shape[1:]) for _ in range(images.size(0))
                 ], dim=0).to(images.device)
             torch.cuda.empty_cache()
-            randimg_sequence_log_probs = self.compute_log_probs(
-                self.model.module,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-                images=fake_images,
-            )  # size = (2 * B, L - 1)
-            randimg_better_log_probs, randimg_worse_log_probs = randimg_sequence_log_probs.chunk(chunks=2, dim=0)  # size = (B, L - 1)
-            randimg_better_log_probs_list.append(randimg_better_log_probs)
-            randimg_worse_log_probs_list.append(randimg_worse_log_probs)
-            torch.cuda.empty_cache()
             with torch.no_grad():
-                ref_randimg_sequence_log_probs = self.compute_log_probs(
+                randimg_sequence_log_probs, randimg_sequence_logits = self.compute_log_probs(
+                    self.model.module,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                    images=fake_images,
+                )  # size = (2 * B, L - 1)
+            with torch.no_grad():
+                ref_randimg_sequence_log_probs, ref_randimg_sequence_logits = self.compute_log_probs(
                     self.reference_model.module,
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     labels=labels,
                     images=fake_images,
                 )
-                ref_randimg_better_log_probs, ref_randimg_worse_log_probs = ref_randimg_sequence_log_probs.chunk(chunks=2, dim=0)  # size = (B, L - 1)
-                ref_randimg_better_log_probs_list.append(ref_randimg_better_log_probs)
-                ref_randimg_worse_log_probs_list.append(ref_randimg_worse_log_probs)
+            if not self.args.dynamic_llm:
+                randimg_sequence_logits = ref_randimg_sequence_logits
+            randimg_better_log_probs, randimg_worse_log_probs = randimg_sequence_log_probs.chunk(chunks=2, dim=0)  # size = (B, L - 1)
+            randimg_better_log_probs_list.append(randimg_better_log_probs)
+            randimg_worse_log_probs_list.append(randimg_worse_log_probs)
+            ref_randimg_better_log_probs, ref_randimg_worse_log_probs = ref_randimg_sequence_log_probs.chunk(chunks=2, dim=0)  # size = (B, L - 1)
+            ref_randimg_better_log_probs_list.append(ref_randimg_better_log_probs)
+            ref_randimg_worse_log_probs_list.append(ref_randimg_worse_log_probs)
+            if self.args.use_logits and self.args.gamma != 1:
+                randimg_logits_list.append(randimg_sequence_logits)
         randimg_better_log_probs = torch.stack(randimg_better_log_probs_list, dim=-1).mean(dim=-1)
         randimg_worse_log_probs = torch.stack(randimg_worse_log_probs_list, dim=-1).mean(dim=-1)
         ref_randimg_better_log_probs = torch.stack(ref_randimg_better_log_probs_list, dim=-1).mean(dim=-1)
         ref_randimg_worse_log_probs = torch.stack(ref_randimg_worse_log_probs_list, dim=-1).mean(dim=-1)
+        if self.args.use_logits and self.args.gamma != 1:
+            randimg_sequence_logits = torch.stack(randimg_logits_list, dim=-1).mean(dim=-1)
+        
+        if self.args.use_logits:
+            cfg_log_probs = gather_log_probabilities_for_cfg(sequence_logits, randimg_sequence_logits, labels[:, 1:], gamma=self.args.gamma)
+            cfg_better_log_probs, cfg_worse_log_probs = cfg_log_probs.chunk(chunks=2, dim=0)
         
         losses = []
         better_sample_rewards, worse_sample_rewards = [], []
         better_img_contributions_rand, worse_img_contributions_rand = [], []
-        better_log_ratio_list, worse_log_ratio_list = [], []
         coef_list = []
         for i in range(batch_size):
             equal_text = torch.all(torch.eq(input_ids[i], worse_input_ids[i])).item()
@@ -684,103 +696,59 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             if category_ids[i].eq(2):
                 coeff = self.args.vqa_coef
             
-            # better-worse logprobs / ref-logprobs: p(y|x,i)
-            ith_better_log_probs = get_log_probs(better_input_ids[i], better_labels[i], better_log_probs[i], 
-                                                 is_answer=True, return_average=self.args.ipo)
-            ith_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], worse_log_probs[i], 
-                                                is_answer=True, final_answer=True, return_average=self.args.ipo)
-            ith_ref_better_log_probs = get_log_probs(better_input_ids[i], better_labels[i], ref_better_log_probs[i], 
-                                                     is_answer=True, return_average=self.args.ipo)
-            ith_ref_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], ref_worse_log_probs[i], 
-                                                    is_answer=True, final_answer=True, return_average=self.args.ipo)
-            # better-worse logprobs with random noise: p(y|x,e) -- p(y|x)
-            ith_rimg_better_log_probs = get_log_probs(better_input_ids[i], better_labels[i], randimg_better_log_probs[i], 
-                                                      is_answer=True, return_average=self.args.ipo)
-            ith_rimg_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], randimg_worse_log_probs[i], 
-                                                     is_answer=True, final_answer=True, return_average=self.args.ipo)
-            ith_ref_rimg_better_log_probs = get_log_probs(better_input_ids[i], better_labels[i], ref_randimg_better_log_probs[i], 
-                                                          is_answer=True, return_average=self.args.ipo)
-            ith_ref_rimg_worse_log_probs = get_log_probs(worse_input_ids[i], worse_labels[i], ref_randimg_worse_log_probs[i], 
-                                                         is_answer=True, final_answer=True, return_average=self.args.ipo)
+            # language bias pairs
+            better_start_index, better_end_index = get_answer_index(better_input_ids[i], final_answer=True), better_attention_mask[i].nonzero()[-1]
+            better_seq_slice = slice(better_start_index - 1, better_end_index)
+            ith_better_log_probs = calculate_log_probs(better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], return_average=self.args.ipo)
+            ith_ref_better_log_probs = calculate_log_probs(ref_better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], return_average=self.args.ipo)
+            ith_rimg_better_log_probs = calculate_log_probs(randimg_better_log_probs[i, better_seq_slice].detach(), better_label_mask[i, better_seq_slice], return_average=self.args.ipo)
+            ith_ref_rimg_better_log_probs = calculate_log_probs(ref_randimg_better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], return_average=self.args.ipo)
             better_img_contributions_rand.append(ith_better_log_probs - ith_rimg_better_log_probs)
+            better_log_ratio = ith_better_log_probs - ith_ref_better_log_probs
+            better_rand_logits = better_log_ratio - (ith_rimg_better_log_probs - ith_ref_rimg_better_log_probs)
+            
+            worse_start_index, worse_end_index = get_answer_index(worse_input_ids[i], final_answer=True), worse_attention_mask[i].nonzero()[-1]
+            worse_seq_slice = slice(worse_start_index - 1, worse_end_index)
+            ith_worse_log_probs = calculate_log_probs(worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], return_average=self.args.ipo)
+            ith_ref_worse_log_probs = calculate_log_probs(ref_worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], return_average=self.args.ipo)
+            ith_rimg_worse_log_probs = calculate_log_probs(randimg_worse_log_probs[i, worse_seq_slice].detach(), worse_label_mask[i, worse_seq_slice], return_average=self.args.ipo)
+            ith_ref_rimg_worse_log_probs = calculate_log_probs(ref_randimg_worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], return_average=self.args.ipo)
             worse_img_contributions_rand.append(ith_worse_log_probs - ith_rimg_worse_log_probs)
-            # better <-> random
-            _better_log_ratio = ith_better_log_probs - ith_ref_better_log_probs
-            rand_better_log_ratio = ith_rimg_better_log_probs - ith_ref_rimg_better_log_probs
-            better_rand_logits = _better_log_ratio - rand_better_log_ratio
-            # random <-> worse
-            rand_worse_log_ratio = ith_rimg_worse_log_probs - ith_ref_rimg_worse_log_probs
-            _worse_log_ratio = ith_worse_log_probs - ith_ref_worse_log_probs
-            worse_rand_logits = rand_worse_log_ratio - _worse_log_ratio
+            worse_log_ratio = ith_worse_log_probs - ith_ref_worse_log_probs
             
             # better <-> worse
-            diverge_index, better_end_index, worse_end_index = get_indexes(
-                better_input_ids[i], worse_input_ids[i],
-                better_attention_mask[i], worse_attention_mask[i],
-            )
-            better_seq_slice = slice(diverge_index - 1, better_end_index)
-            worse_seq_slice = slice(diverge_index - 1, worse_end_index)
-            if self.args.weighted_logits:
-                ith_weighted_better_log_probs = calculate_log_probs(better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], 
-                                                                    return_average=self.args.ipo, 
-                                                                    conf_from_vis=(better_log_probs - (ref_randimg_better_log_probs if self.args.lbwl else ref_better_log_probs))[i, better_seq_slice],
-                                                                    sentence_level=self.args.sentence_level)
-                ith_weighted_worse_log_probs = calculate_log_probs(worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], 
-                                                                   return_average=self.args.ipo, 
-                                                                   conf_from_vis=(worse_log_probs - (ref_randimg_worse_log_probs if self.args.lbwl else ref_worse_log_probs))[i, worse_seq_slice],
-                                                                   sentence_level=self.args.sentence_level)
-                ith_weighted_ref_better_log_probs = calculate_log_probs(ref_better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], 
-                                                                        return_average=self.args.ipo, 
-                                                                        conf_from_vis=(better_log_probs - (ref_randimg_better_log_probs if self.args.lbwl else ref_better_log_probs))[i, better_seq_slice],
-                                                                        sentence_level=self.args.sentence_level)
-                ith_weighted_ref_worse_log_probs = calculate_log_probs(ref_worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], 
-                                                                       return_average=self.args.ipo, 
-                                                                       conf_from_vis=(worse_log_probs - (ref_randimg_worse_log_probs if self.args.lbwl else ref_worse_log_probs))[i, worse_seq_slice],
-                                                                       sentence_level=self.args.sentence_level)
-            ith_better_log_probs = calculate_log_probs(better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], 
-                                                       randimg_log_probs=ref_randimg_better_log_probs[i, better_seq_slice],
-                                                       return_average=self.args.ipo, gamma=self.args.gamma)
-            ith_worse_log_probs = calculate_log_probs(worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], 
-                                                      randimg_log_probs=ref_randimg_worse_log_probs[i, worse_seq_slice],
-                                                      return_average=self.args.ipo, gamma=self.args.gamma)
-            ith_ref_better_log_probs = calculate_log_probs(ref_better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], 
-                                                           return_average=self.args.ipo)
-            ith_ref_worse_log_probs = calculate_log_probs(ref_worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], 
-                                                        return_average=self.args.ipo)
-            better_log_ratio = ith_better_log_probs - ith_ref_better_log_probs
-            worse_log_ratio = ith_worse_log_probs - ith_ref_worse_log_probs
-            if self.args.weighted_logits:
-                logits = (ith_weighted_better_log_probs - ith_weighted_ref_better_log_probs) - \
-                    (ith_weighted_worse_log_probs - ith_weighted_ref_worse_log_probs)
-            else:
-                logits = better_log_ratio - worse_log_ratio
+            if not self.args.ipo and self.args.gamma == 1:
+                diverge_index, better_end_index, worse_end_index = get_indexes(
+                    better_input_ids[i], worse_input_ids[i],
+                    better_attention_mask[i], worse_attention_mask[i],
+                )
+                better_seq_slice = slice(diverge_index - 1, better_end_index)
+                worse_seq_slice = slice(diverge_index - 1, worse_end_index)
             
-            coef1 = (better_log_probs - (ref_randimg_better_log_probs if self.args.lbwl else ref_better_log_probs))[i, better_seq_slice].sum()
-            coef2 = (worse_log_probs - (ref_randimg_worse_log_probs if self.args.lbwl else ref_worse_log_probs))[i, worse_seq_slice].sum()
+            ith_ref_better_log_probs = calculate_log_probs(ref_better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], return_average=self.args.ipo)
+            ith_ref_worse_log_probs = calculate_log_probs(ref_worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], return_average=self.args.ipo)
+            if self.args.use_logits:
+                ith_better_log_probs = calculate_log_probs(cfg_better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], return_average=self.args.ipo)
+                ith_worse_log_probs = calculate_log_probs(cfg_worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], return_average=self.args.ipo)
+            else:
+                ith_better_log_probs = calculate_log_probs(better_log_probs[i, better_seq_slice], better_label_mask[i, better_seq_slice], 
+                                                           randimg_log_probs=randimg_better_log_probs[i, better_seq_slice].detach() if self.args.dynamic_llm else ref_randimg_better_log_probs[i, better_seq_slice],
+                                                           return_average=self.args.ipo, gamma=self.args.gamma)
+                ith_worse_log_probs = calculate_log_probs(worse_log_probs[i, worse_seq_slice], worse_label_mask[i, worse_seq_slice], 
+                                                          randimg_log_probs=randimg_worse_log_probs[i, worse_seq_slice].detach() if self.args.dynamic_llm else ref_randimg_worse_log_probs[i, worse_seq_slice],
+                                                          return_average=self.args.ipo, gamma=self.args.gamma)
+            logits = (ith_better_log_probs - ith_ref_better_log_probs) - (ith_worse_log_probs - ith_ref_worse_log_probs)
+            
+            coef1 = (better_log_probs - (ref_randimg_better_log_probs if self.args.importance_sampling == 'vl' else ref_better_log_probs))[i, better_seq_slice].sum()
+            coef2 = (worse_log_probs - (ref_randimg_worse_log_probs if self.args.importance_sampling == 'vl' else ref_worse_log_probs))[i, worse_seq_slice].sum()
             coef_list.append((coef1 + coef2).detach())
-            if self.args.weighted_coef:                
-                if self.args.wlcoef:
-                    coeff *= (coef1 + coef2).clamp(min=-1, max=1).exp()#.detach()
-                else:
-                    coeff *= coef1.clamp(min=-1, max=1).exp().detach()
+            if self.args.importance_sampling:
+                coeff *= (coef1 + coef2).clamp(min=-1, max=1).exp().detach()
             
             if self.args.ipo:
                 losses.append(coeff * ((logits - 1 / (2 * self.scale_coeff)) ** 2))
                 if self.language_bias_reduce and not images[i].eq(0).all():
                     losses.append(coeff * ((better_rand_logits - 1 / (2 * self.scale_coeff)) ** 2))
-                    # if category_ids[i].ne(0) and category_ids[i].ne(1):
-                    #     losses.append(coeff * ((worse_rand_logits - 1 / (2 * self.scale_coeff)) ** 2))
-            elif self.args.kto:
-                better_log_ratio_list.append(better_log_ratio)
-                worse_log_ratio_list.append(worse_log_ratio)
-                if self.language_bias_reduce and not images[i].eq(0).all():
-                    if _better_log_ratio != better_log_ratio:
-                        better_log_ratio_list.append(_better_log_ratio)
-                    worse_log_ratio_list.append(rand_better_log_ratio)
-                    if category_ids[i].ne(0) and category_ids[i].ne(1):
-                        worse_log_ratio_list.append(rand_worse_log_ratio)
-                        if _worse_log_ratio != worse_log_ratio:
-                            worse_log_ratio_list.append(_worse_log_ratio)
             else:
                 if self.dynamic_label_smoothing:
                     label_smoothing = .2 if self.args.not_dynamic else (1 - confidence[i]) / 2
@@ -791,38 +759,16 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
                     - F.logsigmoid(-self.scale_coeff * logits) * label_smoothing
                 ))
                 if self.language_bias_reduce and not images[i].eq(0).all():
-                    _coef = coeff if self.args.not_dynamic or not self.dynamic_label_smoothing else confidence[i] * coeff
-                    losses.append(_coef * (
-                        -F.logsigmoid(self.scale_coeff * better_rand_logits)
+                    _label_smoothing = label_smoothing / 2
+                    losses.append(coeff * (
+                        - F.logsigmoid(self.scale_coeff * better_rand_logits) * (1 - _label_smoothing)
+                        - F.logsigmoid(-self.scale_coeff * better_rand_logits) * _label_smoothing
                     ))
-                    # losses.append(coeff * (
-                    #     - F.logsigmoid(self.scale_coeff * better_rand_logits) * (1 - label_smoothing)
-                    #     - F.logsigmoid(-self.scale_coeff * better_rand_logits) * label_smoothing
-                    # ))
-                    # if category_ids[i].ne(0) and category_ids[i].ne(1):
-                    #     losses.append(coeff * (
-                    #         - F.logsigmoid(self.scale_coeff * worse_rand_logits) * (1 - label_smoothing)
-                    #         - F.logsigmoid(-self.scale_coeff * worse_rand_logits) * label_smoothing
-                    #     ))
             
             better_sample_rewards.append(self.scale_coeff * better_log_ratio.detach())
             worse_sample_rewards.append(self.scale_coeff * worse_log_ratio.detach())
         
-        if self.args.kto:
-            better_log_ratio = torch.stack(better_log_ratio_list, dim=0)
-            worse_log_ratio = torch.stack(worse_log_ratio_list, dim=0)            
-            chosen_KL = better_log_ratio.mean().clamp(min=0)
-            rejected_KL = worse_log_ratio.mean().clamp(min=0)
-            # As described in the KTO report, the KL term for chosen (rejected) is estimated using the rejected (chosen) half.
-            loss = torch.cat(
-                (
-                    1 - F.sigmoid(self.scale_coeff * (better_log_ratio - rejected_KL)),
-                    1 - F.sigmoid(self.scale_coeff * (chosen_KL - worse_log_ratio)),
-                ),
-                0,
-            ).mean()
-        else:
-            loss = torch.stack(losses).mean()
+        loss = torch.stack(losses).mean()
         
         better_sample_rewards = torch.stack(better_sample_rewards)  # size = (B,)
         worse_sample_rewards = torch.stack(worse_sample_rewards)  # size = (B,)
@@ -836,6 +782,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         better_img_contributions_rand = torch.stack(better_img_contributions_rand).mean()
         worse_img_contributions_rand = torch.stack(worse_img_contributions_rand).mean()
         max_coef = torch.stack(coef_list, dim=0).max()
+        avg_coef = torch.stack(coef_list, dim=0).mean()
         
         self.model.backward(loss)
         self.model.step()
@@ -848,6 +795,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         better_img_contributions_rand = get_all_reduce_mean(better_img_contributions_rand)
         worse_img_contributions_rand = get_all_reduce_mean(worse_img_contributions_rand)
         max_coef = get_all_reduce_max(max_coef)
+        avg_coef = get_all_reduce_mean(avg_coef)
         
         return {
             'train/loss': loss.item(),
@@ -859,6 +807,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
             'train/better_img_contributions_rand': better_img_contributions_rand.item(),
             'train/worse_img_contributions_rand': worse_img_contributions_rand.item(),
             'train/max_coef': max_coef.item(),
+            'train/avg_coef': avg_coef.item(),
         }
     
     def ptx_step(

@@ -311,16 +311,9 @@ def get_indexes(better_input_ids, worse_input_ids,
         worse_end_index = max(better_end_index, worse_end_index)
     return diverge_index, better_end_index, worse_end_index
     
-def calculate_log_probs(log_probs, label_mask, randimg_log_probs=None, gamma=1,
-                        return_average=False, conf_from_vis=None, sentence_level=False):
+def calculate_log_probs(log_probs, label_mask, randimg_log_probs=None, gamma=1, return_average=False):
     if randimg_log_probs is not None and gamma != 1:
-        log_probs = gamma * log_probs - (gamma - 1) * randimg_log_probs.detach()
-    if conf_from_vis is not None:
-        if sentence_level:
-            conf = conf_from_vis.mean().clamp(min=-1, max=1).exp().detach()
-        else:
-            conf = conf_from_vis.clamp(min=-1, max=1).exp().detach()
-        log_probs = log_probs * conf
+        log_probs = gamma * log_probs - (gamma - 1) * randimg_log_probs
     if return_average:
         return (log_probs * label_mask).sum(dim=-1) / label_mask.sum(dim=-1)
     return (log_probs * label_mask).sum(dim=-1)

@@ -3,7 +3,7 @@
 export WANDB_MODE=online
 export WANDB_API_KEY="1396a7d2a29a8e8241dff6e0e6371f2ad61e11e2"
 
-OUTPUT_DIR="/home/users/nus/e0672129/scratch/LLaVA-DPO/outputs/experiments/llava/imp_sml/llava-dpo-cfgref"
+OUTPUT_DIR="/mnt/data/yuxi/dpo_llava/outputs/synthetic/llava-dpo"
 mkdir -p $OUTPUT_DIR
 
 exec 1> >(tee "${OUTPUT_DIR}/stdout.log" >&1) 2> >(tee "${OUTPUT_DIR}/stderr.log" >&2)
@@ -22,7 +22,7 @@ MASTER_PORT="$(
 export NCCL_DEBUG=INFO
 export NCCL_DEBUG_SUBSYS=INIT,P2P
 
-gpu_vis=0,1
+gpu_vis=0
 
 MODEL_PATH="liuhaotian/llava-v1.5-7b"
 REF_MODEL_PATH="liuhaotian/llava-v1.5-7b"
@@ -33,12 +33,10 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --model_name_or_path $MODEL_PATH \
     --ref_model_name_or_path $REF_MODEL_PATH \
     --n_random_images 0 \
-    --lbwl \
-    --gamma 2.0 \
     --version v1 \
     --scale_coeff 0.1 \
-    --data_path /home/users/nus/e0672129/scratch/LLaVA-DPO/data/all_preferences_5k_v10.json \
-    --image_folder /home/users/nus/e0672129/scratch \
+    --data_path /mnt/data/yuxi/dpo_llava/data/synthetic_dataset_5k.json \
+    --image_folder /mnt/data/yuxi \
     --vision_tower openai/clip-vit-large-patch14-336 \
     --mm_projector_type mlp2x_gelu \
     --mm_vision_select_layer -2 \
@@ -49,7 +47,7 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --bf16 True \
     --output_dir $OUTPUT_DIR \
     --num_train_epochs 4 \
-    --per_device_train_batch_size 2 \
+    --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 16 \
     --evaluation_strategy "no" \
