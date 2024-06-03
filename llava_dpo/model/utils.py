@@ -27,3 +27,10 @@ def gather_log_probabilities(logits: torch.Tensor, labels: torch.LongTensor) -> 
     log_probs = F.log_softmax(logits.float(), dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=labels.long().unsqueeze(dim=-1))
     return log_probs_labels.squeeze(dim=-1)
+
+
+def gather_log_probabilities_for_cfg(logits: torch.Tensor, llm_logits: torch.Tensor, labels: torch.LongTensor, gamma=1):
+    modified_logits = gamma * logits - (gamma - 1) * llm_logits
+    log_probs = F.log_softmax(modified_logits.float(), dim=-1)
+    log_probs_labels = log_probs.gather(dim=-1, index=labels.long().unsqueeze(dim=-1))
+    return log_probs_labels.squeeze(dim=-1)

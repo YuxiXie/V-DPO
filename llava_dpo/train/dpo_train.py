@@ -115,25 +115,22 @@ class TrainingArguments(transformers.TrainingArguments):
         default=16,
         metadata={"help": "How many bits to use."}
     )
-    gamma: float = 1
-    lbwl: bool = False
-    wlcoef: bool = False
-    weighted_coef: bool = False
-    sentence_level: bool = False
+    gamma: float = 1    # CFG
+    use_logits: bool = False   # normalized prob for CFG
+    dynamic_llm: bool = False   # whether to use the updated p(y|x)
+    importance_sampling: Optional[str] = None
     need_eval: bool = False
     ptx_coef: float = 0.1
     instruct_coef: float = 1.0
     region_coef: float = 1.0
     vqa_coef: float = 1.0
-    scale_coeff: float = .01
-    label_smoothing: float = 0
-    not_dynamic: bool = False
-    weighted_logits: bool = False
-    dynamic_label_smoothing: bool = False
-    language_bias_reduce: bool = False
+    scale_coeff: float = .01    # beta
+    label_smoothing: float = 0  # conservative (default)
+    not_dynamic: bool = False   # static cDPO
+    dynamic_label_smoothing: bool = False   # dynamic cDPO
+    language_bias_reduce: bool = False      # p(y|v,x) > p(y|x)
     resume_from_ckpt: Optional[str] = None
     ipo: bool = False
-    kto: bool = False
     lora_enable: bool = False
     lora_r: int = 64
     lora_alpha: int = 16
@@ -789,9 +786,9 @@ def preprocess_contrastive_v1(
             else:
                 round_len = len(tokenizer(rou).input_ids)
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-            # if i > 0:
-            #     round_len -= 1
-            #     instruction_len -= 1
+            if i > 0:
+                round_len -= 1
+                instruction_len -= 1
 
             target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
 
