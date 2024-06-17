@@ -1,9 +1,9 @@
 #!/bin/bash
 
 export WANDB_MODE=online
-export WANDB_API_KEY="1396a7d2a29a8e8241dff6e0e6371f2ad61e11e2"
+export WANDB_API_KEY=""
 
-OUTPUT_DIR="/home/users/nus/e0672129/scratch/LLaVA-DPO/outputs/checkpoints/llava-v1.5-7b-ipo-sherlock-mix-365k-beta0.1"
+OUTPUT_DIR=""
 mkdir -p $OUTPUT_DIR
 
 exec 1> >(tee "${OUTPUT_DIR}/stdout.log" >&1) 2> >(tee "${OUTPUT_DIR}/stderr.log" >&2)
@@ -24,15 +24,21 @@ export NCCL_DEBUG_SUBSYS=INIT,P2P
 
 gpu_vis=0,1
 
+MODEL_PATH="liuhaotian/llava-v1.5-7b"
+REF_MODEL_PATH="liuhaotian/llava-v1.5-7b"
+
 deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --module llava_dpo.train.dpo_train \
     --deepspeed ./scripts/zero3_offload.json \
-    --model_name_or_path liuhaotian/llava-v1.5-7b \
+    --model_name_or_path $MODEL_PATH \
+    --ref_model_name_or_path $REF_MODEL_PATH \
+    --n_random_images 0 \
+    --gamma 0.0 \
     --version v1 \
-    --ipo \
     --scale_coeff 0.1 \
-    --data_path /home/users/nus/e0672129/scratch/LLaVA-DPO/data/sherlock_filter/sherlock_similarityscores_mix-duplicate_365k.json \
-    --image_folder /home/users/nus/e0672129/scratch/LLaVA-DPO/images/sherlock/train \
+    --dynamic_llm \
+    --data_path ./RLHF-V/RLHF-V-Dataset-5.7k.json \
+    --image_folder ./RLHF-V/images \
     --vision_tower openai/clip-vit-large-patch14-336 \
     --mm_projector_type mlp2x_gelu \
     --mm_vision_select_layer -2 \
@@ -42,14 +48,13 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --group_by_modality_length True \
     --bf16 True \
     --output_dir $OUTPUT_DIR \
-    --num_train_epochs 1 \
+    --num_train_epochs 4 \
     --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 4 \
-    --gradient_accumulation_steps 32 \
+    --gradient_accumulation_steps 8 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 1024 \
-    --save_total_limit 5 \
+    --save_steps 2048 \
     --learning_rate 1e-6 \
     --weight_decay 0.05 \
     --warmup_ratio 0.03 \
@@ -60,8 +65,5 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --gradient_checkpointing True \
     --dataloader_num_workers 1 \
     --lazy_preprocess True \
+    --log_project LLaVA-DPO-WL \
     --report_to wandb
-
-# --tune_mm_mlp_adapter
-# /mnt/data/yuxi/sherlock/img2img/train
-# /mnt/data/guanzhen/coco/Image
