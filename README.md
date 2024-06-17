@@ -3,7 +3,7 @@
 This repository contains code and analysis for the paper: [V-DPO: Mitigating Hallucination in Large Vision Language Models via Vision-Guided Direct Preference Optimization](). 
 Below is the framework of our proposed method (including data collection and preference learning).
 
-![Model Framework](pipeline.jpg)
+![Model Framework](pipeline.png)
 
 ## Environment Setup
 
