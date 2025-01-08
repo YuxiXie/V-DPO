@@ -47,8 +47,8 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --bf16 True \
     --output_dir $OUTPUT_DIR \
     --num_train_epochs 4 \
-    --per_device_train_batch_size 1 \
-    --per_device_eval_batch_size 1 \
+    --per_device_train_batch_size 4 \
+    --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 8 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \

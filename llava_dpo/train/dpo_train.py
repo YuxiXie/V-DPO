@@ -1094,11 +1094,7 @@ class LazyContrastiveDataset(LazySupervisedDataset):
             )
         else:
             sources_better = copy.deepcopy([e["conversations"] for e in sources])
-            print('sources_better:', sources_better)
             sources_worse = copy.deepcopy([e.get("contrastive_conversations", e["conversations"]) for e in sources])
-            print('sources_worse:', sources_worse)
-            print('=============================')
-            exit()
         data_dict = preprocess_contrastive(
             sources_better,
             sources_worse,
