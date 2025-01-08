@@ -35,8 +35,8 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --n_random_images 0 \
     --version v1 \
     --scale_coeff 0.1 \
-    --data_path /home/workspace/RLHF-V/RLHF-V-Dataset-5.7k.json \
-    --image_folder /home/workspace/RLHF-V/images \
+    --data_path /home/workspace/MMVP/MMVP-Dataset-300.json \
+    --image_folder /home/workspace/MMVP/Images \
     --vision_tower openai/clip-vit-large-patch14-336 \
     --mm_projector_type mlp2x_gelu \
     --mm_vision_select_layer -2 \
