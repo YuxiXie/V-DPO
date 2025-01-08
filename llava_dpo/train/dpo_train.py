@@ -77,7 +77,7 @@ class DataArguments:
 
 @dataclass
 class PTXDataArguments:
-    ptx_data_path: str = field(default='/home/workspace/RLHF-V/RLHF-V-Dataset-5.7k.json',
+    ptx_data_path: str = field(default=None,
                                metadata={"help": "Path to the training data."})
     ptx_lazy_preprocess: bool = False
     ptx_is_multimodal: bool = False
@@ -143,7 +143,7 @@ class TrainingArguments(transformers.TrainingArguments):
     
     group_by_modality_length: bool = field(default=False)
     log_project: Optional[str] = None
-    per_device_ptx_train_batch_size: int = 64 # batch size 
+    per_device_ptx_train_batch_size: int = 32 # batch size 
     n_random_images: int = 8
 
 
@@ -1094,7 +1094,11 @@ class LazyContrastiveDataset(LazySupervisedDataset):
             )
         else:
             sources_better = copy.deepcopy([e["conversations"] for e in sources])
+            print('sources_better:', sources_better)
             sources_worse = copy.deepcopy([e.get("contrastive_conversations", e["conversations"]) for e in sources])
+            print('sources_worse:', sources_worse)
+            print('=============================')
+            exit()
         data_dict = preprocess_contrastive(
             sources_better,
             sources_worse,
@@ -1117,10 +1121,10 @@ class LazyContrastiveDataset(LazySupervisedDataset):
             crop_size = self.data_args.image_processor.crop_size
             data_dict['image'] = torch.zeros(2, 3, crop_size['height'], crop_size['width'])
         data_dict['category'] = self.list_data_dict[i].get('category', 'default')
-        if 'clip_scores' in self.list_data_dict[i]:
-            data_dict['confidence'] = self.list_data_dict[i]['clip_scores'][0] / (self.list_data_dict[i]['clip_scores'][0] + self.list_data_dict[i]['clip_scores'][1])
-        else:
-            data_dict['confidence'] = .8
+        # if 'clip_scores' in self.list_data_dict[i]:
+        #     data_dict['confidence'] = self.list_data_dict[i]['clip_scores'][0] / (self.list_data_dict[i]['clip_scores'][0] + self.list_data_dict[i]['clip_scores'][1])
+        # else:
+        #     data_dict['confidence'] = .8
         return data_dict
 
 
@@ -1182,10 +1186,15 @@ class DataCollatorForContrastiveDataset(object):
     tokenizer: transformers.PreTrainedTokenizer
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
-        better_input_ids, better_labels, worse_input_ids, worse_labels, category, confidence = \
+        # better_input_ids, better_labels, worse_input_ids, worse_labels, category, confidence = \
+        #     tuple([instance[key] for instance in instances] for key in ("better_input_ids", "better_labels",
+        #                                                                 "worse_input_ids", "worse_labels", 
+        #                                                                 "category", "confidence"))
+        better_input_ids, better_labels, worse_input_ids, worse_labels, category = \
             tuple([instance[key] for instance in instances] for key in ("better_input_ids", "better_labels",
                                                                         "worse_input_ids", "worse_labels", 
-                                                                        "category", "confidence"))
+                                                                        "category"))
+                                                                        
         input_ids = [x for x in better_input_ids] + [x for x in worse_input_ids]
         labels = [x for x in better_labels] + [x for x in worse_labels]
         txt_input_ids, txt_labels, out_input_ids, out_labels = [], [], [], []
@@ -1208,7 +1217,7 @@ class DataCollatorForContrastiveDataset(object):
             'default': 0,
         }
         category_ids = torch.Tensor([txt2id[x] for x in category]).unsqueeze(-1)
-        confidence = torch.Tensor(confidence).unsqueeze(-1)
+        # confidence = torch.Tensor(confidence).unsqueeze(-1)
         
         batch = dict(
             better_input_ids=better_input_ids[:, :self.tokenizer.model_max_length],
@@ -1218,7 +1227,7 @@ class DataCollatorForContrastiveDataset(object):
             worse_labels=worse_labels[:, :self.tokenizer.model_max_length],
             worse_attention_mask=worse_input_ids.ne(self.tokenizer.pad_token_id),
             category_ids=category_ids,
-            confidence=confidence,
+            # confidence=confidence,
         )
 
         if 'image' in instances[0]:

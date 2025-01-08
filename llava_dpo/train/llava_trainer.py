@@ -520,7 +520,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         worse_attention_mask: torch.BoolTensor,
         images: torch.Tensor,
         category_ids: torch.Tensor = None,
-        confidence: torch.Tensor = None,
+        # confidence: torch.Tensor = None,
     ) -> tuple[tuple]:
         assert better_input_ids.size(0) == worse_input_ids.size(0), 'batch size mismatch!'
         
@@ -579,7 +579,7 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
         worse_attention_mask: torch.BoolTensor,
         images: torch.Tensor,
         category_ids: torch.Tensor = None,
-        confidence: torch.Tensor = None,
+        # confidence: torch.Tensor = None,
     ) -> dict[str, Any]:
         """Loss function for the DPO algorithm.
 
@@ -751,7 +751,8 @@ class DPOLLaVATrainer(LLaVATrainer, Trainer):
                     losses.append(coeff * ((better_rand_logits - 1 / (2 * self.scale_coeff)) ** 2))
             else:
                 if self.dynamic_label_smoothing:
-                    label_smoothing = .2 if self.args.not_dynamic else (1 - confidence[i]) / 2
+                    # label_smoothing = .2 if self.args.not_dynamic else (1 - confidence[i]) / 2
+                    label_smoothing = self.label_smoothing
                 else:
                     label_smoothing = self.label_smoothing
                 losses.append(coeff * (
