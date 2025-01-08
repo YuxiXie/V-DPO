@@ -77,11 +77,11 @@ class DataArguments:
 
 @dataclass
 class PTXDataArguments:
-    ptx_data_path: str = field(default=None,
+    ptx_data_path: str = field(default='/home/workspace/RLHF-V/RLHF-V-Dataset-5.7k.json',
                                metadata={"help": "Path to the training data."})
     ptx_lazy_preprocess: bool = False
     ptx_is_multimodal: bool = False
-    ptx_image_folder: Optional[str] = field(default=None)
+    ptx_image_folder: Optional[str] = field(default='/home/workspace/RLHF-V/images')
     ptx_image_aspect_ratio: str = 'square'
 
 
@@ -143,7 +143,7 @@ class TrainingArguments(transformers.TrainingArguments):
     
     group_by_modality_length: bool = field(default=False)
     log_project: Optional[str] = None
-    per_device_ptx_train_batch_size: int = 128
+    per_device_ptx_train_batch_size: int = 64 # batch size 
     n_random_images: int = 8
 
 
@@ -1283,7 +1283,7 @@ def train():
             )
         ))
 
-    if model_args.vision_tower is not None:
+    if model_args.vision_tower is not None: # True 
         if 'mpt' in model_args.model_name_or_path:
             config = transformers.AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=True)
             config.attn_config['attn_impl'] = training_args.mpt_attn_impl
@@ -1313,9 +1313,12 @@ def train():
     model.config.use_cache = False
     ref_model.config.use_cache = False
 
-    if model_args.freeze_backbone:
+    if model_args.freeze_backbone: # False
         model.model.requires_grad_(False)
     ref_model.model.requires_grad_(False)
+
+    print('freeze_backbone: ', model_args.freeze_backbone)
+    print('=============================================')
 
     if training_args.bits in [4, 8]:
         from peft import prepare_model_for_kbit_training
@@ -1330,7 +1333,7 @@ def train():
                 output.requires_grad_(True)
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 
-    if training_args.lora_enable:
+    if training_args.lora_enable: # False
         from peft import LoraConfig, get_peft_model
         lora_config = LoraConfig(
             r=training_args.lora_r,
@@ -1346,7 +1349,14 @@ def train():
             if training_args.fp16:
                 model.to(torch.float16)
         rank0_print("Adding LoRA adapters...")
+        
+        model.print_trainable_parameters()
         model = get_peft_model(model, lora_config)
+        model.print_trainable_parameters()
+        print('=======') 
+    
+    print('lora_enable: ', training_args.lora_enable)
+    print('========================================')
 
     if 'mpt' in model_args.model_name_or_path:
         tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -1442,8 +1452,10 @@ def train():
         
         if ptx_data_args.ptx_data_path is not None:
             ptx_data_args.mm_use_im_start_end = data_args.mm_use_im_start_end
-            
 
+    print('vision_tower: ', model_args.vision_tower)
+    print('========================================')
+    
     if training_args.bits in [4, 8]:
         from peft.tuners.lora import LoraLayer
         for name, module in model.named_modules():
@@ -1458,7 +1470,7 @@ def train():
                         module = module.to(torch.bfloat16)
 
     data_module = make_contrastive_data_module(tokenizer=tokenizer, data_args=data_args)
-    if ptx_data_args.ptx_data_path is not None:
+    if ptx_data_args.ptx_data_path is not None: # True 
         ptx_data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=ptx_data_args)
     else:
         ptx_data_module = dict(ptx_train_dataset=None, ptx_eval_dataset=None, ptx_data_collator=None)

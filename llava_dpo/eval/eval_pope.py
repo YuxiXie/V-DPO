@@ -63,7 +63,7 @@ def eval_pope(answers, label_file):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--annotation-dir", type=str)
+    parser.add_argument("--annotation-dir", default='/root/V-DPO/playground/data/pope', type=str)
     parser.add_argument("--question-file", type=str)
     parser.add_argument("--result-file", type=str)
     args = parser.parse_args()

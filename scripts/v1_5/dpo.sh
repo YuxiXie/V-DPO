@@ -1,9 +1,9 @@
 #!/bin/bash
 
 export WANDB_MODE=online
-export WANDB_API_KEY=""
+export WANDB_API_KEY="7731b162216aef9fa7ff6fd05c2e1a836a1a8d98"
 
-OUTPUT_DIR=""
+OUTPUT_DIR="/home/workspace/dpo/llava-1.5"
 mkdir -p $OUTPUT_DIR
 
 exec 1> >(tee "${OUTPUT_DIR}/stdout.log" >&1) 2> >(tee "${OUTPUT_DIR}/stderr.log" >&2)
@@ -22,7 +22,7 @@ MASTER_PORT="$(
 export NCCL_DEBUG=INFO
 export NCCL_DEBUG_SUBSYS=INIT,P2P
 
-gpu_vis=0,1
+gpu_vis=0
 
 MODEL_PATH="liuhaotian/llava-v1.5-7b"
 REF_MODEL_PATH="liuhaotian/llava-v1.5-7b"
@@ -35,8 +35,8 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --n_random_images 0 \
     --version v1 \
     --scale_coeff 0.1 \
-    --data_path ./RLHF-V/RLHF-V-Dataset-5.7k.json \
-    --image_folder ./RLHF-V/images \
+    --data_path /home/workspace/RLHF-V/RLHF-V-Dataset-5.7k.json \
+    --image_folder /home/workspace/RLHF-V/images \
     --vision_tower openai/clip-vit-large-patch14-336 \
     --mm_projector_type mlp2x_gelu \
     --mm_vision_select_layer -2 \
@@ -47,8 +47,8 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT \
     --bf16 True \
     --output_dir $OUTPUT_DIR \
     --num_train_epochs 4 \
-    --per_device_train_batch_size 4 \
-    --per_device_eval_batch_size 4 \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 8 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
